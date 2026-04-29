@@ -1,0 +1,456 @@
+// ============================================================
+// CricOS Database Schema
+// Event-sourced scoring: ball_events is the source of truth.
+// Match state is DERIVED, enabling undo/replay/analytics.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── USERS & AUTH ───────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  phone        String?
+  avatarUrl    String?
+  role         UserRole @default(PLAYER)
+  isVerified   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+  playerProfile Player?
+  organizedLeagues League[]
+  scoredMatches    Match[]   @relation("MatchScorer")
+  createdMatches   Match[]   @relation("MatchCreator")
+  payments         Payment[]
+
+  @@index([email])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+}
+
+enum UserRole {
+  ADMIN
+  ORGANIZER
+  SCORER
+  PLAYER
+  VIEWER
+}
+
+// ─── PLAYERS & TEAMS ────────────────────────────────────────
+
+model Player {
+  id            String        @id @default(cuid())
+  userId        String?       @unique
+  name          String
+  jerseyNumber  Int?
+  dateOfBirth   DateTime?
+  battingStyle  BattingStyle?
+  bowlingStyle  String?       // "Right-arm fast", "Left-arm spin", etc.
+  role          PlayerRole?
+  avatarUrl     String?
+  city          String?
+  country       String        @default("India")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user            User?             @relation(fields: [userId], references: [id])
+  teamMemberships TeamMember[]
+  battingRecords  BallEvent[]       @relation("BatsmanEvents")
+  bowlingRecords  BallEvent[]       @relation("BowlerEvents")
+  fieldingRecords WicketEvent[]     @relation("FielderEvents")
+  outRecords      WicketEvent[]     @relation("OutBatsmanEvents")
+
+  // Full-text search vector — updated by trigger
+  searchVector Unsupported("tsvector")?
+
+  @@index([name])
+  @@index([searchVector], type: Gin, map: "player_search_idx")
+}
+
+enum BattingStyle {
+  RIGHT_HAND
+  LEFT_HAND
+}
+
+enum PlayerRole {
+  BATSMAN
+  BOWLER
+  ALL_ROUNDER
+  WICKET_KEEPER
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  shortName String   @db.VarChar(5)
+  logoUrl   String?
+  city      String?
+  country   String   @default("India")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members        TeamMember[]
+  homeMatches    Match[]      @relation("HomeTeam")
+  awayMatches    Match[]      @relation("AwayTeam")
+  leagueTeams    LeagueTeam[]
+  battingInnings Innings[]    @relation("BattingTeam")
+  bowlingInnings Innings[]    @relation("BowlingTeam")
+  payments       Payment[]
+
+  searchVector Unsupported("tsvector")?
+
+  @@index([name])
+  @@index([searchVector], type: Gin, map: "team_search_idx")
+}
+
+model TeamMember {
+  id        String           @id @default(cuid())
+  teamId    String
+  playerId  String
+  role      TeamMemberRole   @default(PLAYER)
+  joinedAt  DateTime         @default(now())
+  isActive  Boolean          @default(true)
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, playerId])
+  @@index([teamId])
+  @@index([playerId])
+}
+
+enum TeamMemberRole {
+  CAPTAIN
+  VICE_CAPTAIN
+  PLAYER
+  COACH
+}
+
+// ─── LEAGUES ────────────────────────────────────────────────
+
+model League {
+  id              String       @id @default(cuid())
+  name            String
+  slug            String       @unique  // URL-friendly identifier
+  description     String?
+  logoUrl         String?
+  bannerUrl       String?
+  organizerId     String
+  format          MatchFormat  @default(T20)
+  overs           Int          @default(20)
+  startDate       DateTime?
+  endDate         DateTime?
+  registrationFee Int          @default(0)  // in smallest currency unit (paise)
+  currency        String       @default("INR")
+  maxTeams        Int?
+  isPublic        Boolean      @default(true)
+  status          LeagueStatus @default(DRAFT)
+  rules           String?      @db.Text
+  city            String?
+  country         String       @default("India")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  organizer User         @relation(fields: [organizerId], references: [id])
+  teams     LeagueTeam[]
+  matches   Match[]
+  sponsors  Sponsor[]
+  payments  Payment[]
+
+  searchVector Unsupported("tsvector")?
+
+  @@index([slug])
+  @@index([status])
+  @@index([searchVector], type: Gin, map: "league_search_idx")
+}
+
+enum LeagueStatus {
+  DRAFT
+  REGISTRATION_OPEN
+  ONGOING
+  COMPLETED
+}
+
+model LeagueTeam {
+  id           String              @id @default(cuid())
+  leagueId     String
+  teamId       String
+  registeredAt DateTime            @default(now())
+  paymentStatus PaymentStatus      @default(PENDING)
+  pointsEarned Int                 @default(0)
+  matchesPlayed Int                @default(0)
+  matchesWon   Int                 @default(0)
+  nrr          Float               @default(0) // net run rate
+
+  league League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([leagueId, teamId])
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+// ─── MATCHES ────────────────────────────────────────────────
+
+model Match {
+  id           String      @id @default(cuid())
+  title        String?
+  homeTeamId   String
+  awayTeamId   String
+  venue        String?
+  city         String?
+  scheduledAt  DateTime?
+  format       MatchFormat @default(T20)
+  overs        Int         @default(20)
+  leagueId     String?
+  scorerId     String?
+  creatorId    String
+  isPublic     Boolean     @default(true)
+  shareToken   String      @unique @default(cuid())
+  tossWinnerId String?
+  tossDecision TossDecision?
+  status       MatchStatus @default(UPCOMING)
+  resultType   ResultType?
+  winnerId     String?
+  winMargin    Int?
+  winMarginType MarginType?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  homeTeam Team    @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam Team    @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  league   League? @relation(fields: [leagueId], references: [id])
+  scorer   User?   @relation("MatchScorer", fields: [scorerId], references: [id])
+  creator  User    @relation("MatchCreator", fields: [creatorId], references: [id])
+  innings  Innings[]
+
+  searchVector Unsupported("tsvector")?
+
+  @@index([status])
+  @@index([shareToken])
+  @@index([leagueId])
+  @@index([searchVector], type: Gin, map: "match_search_idx")
+}
+
+enum MatchFormat {
+  T20
+  ODI
+  T10
+  TEST
+  CUSTOM
+}
+
+enum MatchStatus {
+  UPCOMING
+  TOSS
+  IN_PROGRESS
+  INNINGS_BREAK
+  COMPLETED
+  ABANDONED
+  CANCELLED
+}
+
+enum TossDecision {
+  BAT
+  BOWL
+}
+
+enum ResultType {
+  WIN
+  TIE
+  NO_RESULT
+  DRAW
+}
+
+enum MarginType {
+  RUNS
+  WICKETS
+}
+
+// ─── INNINGS & BALL-BY-BALL (SCORING CORE) ──────────────────
+
+model Innings {
+  id             String   @id @default(cuid())
+  matchId        String
+  inningsNumber  Int      // 1 or 2
+  battingTeamId  String
+  bowlingTeamId  String
+  totalRuns      Int      @default(0)
+  totalWickets   Int      @default(0)
+  completedOvers Int      @default(0)
+  extraBalls     Int      @default(0)   // balls in current incomplete over
+  extrasWides    Int      @default(0)
+  extrasNoBalls  Int      @default(0)
+  extrasByes     Int      @default(0)
+  extrasLegByes  Int      @default(0)
+  extrasPenalties Int     @default(0)
+  isCompleted    Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  match       Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  battingTeam Team        @relation("BattingTeam", fields: [battingTeamId], references: [id])
+  bowlingTeam Team        @relation("BowlingTeam", fields: [bowlingTeamId], references: [id])
+  ballEvents  BallEvent[]
+
+  @@unique([matchId, inningsNumber])
+  @@index([matchId])
+}
+
+// SOURCE OF TRUTH — every ball is an immutable event
+model BallEvent {
+  id             String    @id @default(cuid())
+  clientId       String    @unique  // client-generated UUID for offline idempotency
+  matchId        String
+  inningsId      String
+  overNumber     Int       // 0-indexed
+  ballNumber     Int       // legal ball number within over (0-5)
+  rawBallNumber  Int       // absolute sequence including extras
+  batsmanId      String
+  bowlerId       String
+  runs           Int       @default(0)
+  extraType      ExtraType?
+  extraRuns      Int       @default(0)
+  isLegalBall    Boolean   @default(true)
+  isWicket       Boolean   @default(false)
+  isBoundary     Boolean   @default(false)
+  isSix          Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  innings  Innings      @relation(fields: [inningsId], references: [id], onDelete: Cascade)
+  batsman  Player       @relation("BatsmanEvents", fields: [batsmanId], references: [id])
+  bowler   Player       @relation("BowlerEvents", fields: [bowlerId], references: [id])
+  wicket   WicketEvent?
+
+  @@index([inningsId])
+  @@index([matchId])
+  @@index([batsmanId])
+  @@index([bowlerId])
+  @@index([clientId])
+}
+
+enum ExtraType {
+  WIDE
+  NO_BALL
+  BYE
+  LEG_BYE
+  PENALTY
+}
+
+model WicketEvent {
+  id           String      @id @default(cuid())
+  ballEventId  String      @unique
+  wicketType   WicketType
+  outBatsmanId String
+  fielderId    String?
+  createdAt    DateTime    @default(now())
+
+  ballEvent  BallEvent @relation(fields: [ballEventId], references: [id], onDelete: Cascade)
+  outBatsman Player    @relation("OutBatsmanEvents", fields: [outBatsmanId], references: [id])
+  fielder    Player?   @relation("FielderEvents", fields: [fielderId], references: [id])
+}
+
+enum WicketType {
+  BOWLED
+  CAUGHT
+  LBW
+  RUN_OUT
+  STUMPED
+  HIT_WICKET
+  HANDLED_BALL
+  OBSTRUCTING_FIELD
+  RETIRED_HURT
+  TIMED_OUT
+}
+
+// ─── SPONSORSHIPS & MONETIZATION ────────────────────────────
+
+model Sponsor {
+  id         String      @id @default(cuid())
+  leagueId   String
+  name       String
+  logoUrl    String?
+  websiteUrl String?
+  tier       SponsorTier @default(ASSOCIATE)
+  isActive   Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+
+  league League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+}
+
+enum SponsorTier {
+  TITLE
+  GOLD
+  SILVER
+  ASSOCIATE
+}
+
+model Payment {
+  id               String        @id @default(cuid())
+  leagueId         String
+  teamId           String
+  userId           String
+  amount           Int           // in smallest unit
+  currency         String        @default("INR")
+  status           PaymentStatus @default(PENDING)
+  stripeSessionId  String?       @unique
+  stripePaymentId  String?
+  failureReason    String?
+  paidAt           DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  league League @relation(fields: [leagueId], references: [id])
+  team   Team   @relation(fields: [teamId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([leagueId])
+  @@index([teamId])
+  @@index([stripeSessionId])
+}
+
+// ─── SEARCH TRACKING ────────────────────────────────────────
+
+model RecentSearch {
+  id        String          @id @default(cuid())
+  userId    String
+  query     String
+  resultId  String?
+  resultType SearchEntityType?
+  createdAt DateTime        @default(now())
+
+  @@index([userId])
+}
+
+enum SearchEntityType {
+  PLAYER
+  TEAM
+  MATCH
+  LEAGUE
+}

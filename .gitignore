@@ -1,0 +1,19 @@
+node_modules
+.next
+dist
+.env
+.env.local
+.env*.local
+*.log
+.turbo
+.DS_Store
+coverage
+
+# Expo
+apps/mobile/.expo
+apps/mobile/android
+apps/mobile/ios
+
+# Prisma migrations lock (keep migrations but ignore the shadow db)
+packages/db/prisma/dev.db
+packages/db/prisma/dev.db-journal
