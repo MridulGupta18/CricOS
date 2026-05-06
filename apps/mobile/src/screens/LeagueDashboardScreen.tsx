@@ -231,36 +231,35 @@ export function LeagueDashboardScreen() {
           {/* POINTS TABLE */}
           {tab === 'points' && (
             standings.length > 0 ? (
-              <View style={{ borderRadius: R.lg, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
-                {/* Header */}
-                <View style={{ flexDirection: 'row', backgroundColor: '#0D1220', paddingHorizontal: S.md, paddingVertical: S.sm, borderBottomWidth: 1, borderBottomColor: C.border }}>
-                  <Text style={{ width: 26, fontFamily: F.semi, fontSize: 10, color: C.textMuted }}>#</Text>
-                  <Text style={{ flex: 1, fontFamily: F.semi, fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Team</Text>
-                  <Text style={{ width: 28, fontFamily: F.semi, fontSize: 10, color: C.textMuted, textAlign: 'right', textTransform: 'uppercase' }}>W</Text>
-                  <Text style={{ width: 28, fontFamily: F.semi, fontSize: 10, color: C.textMuted, textAlign: 'right', textTransform: 'uppercase' }}>L</Text>
-                  <Text style={{ width: 44, fontFamily: F.semi, fontSize: 10, color: C.textMuted, textAlign: 'right', textTransform: 'uppercase' }}>Pts</Text>
-                  <Text style={{ width: 52, fontFamily: F.semi, fontSize: 10, color: C.textMuted, textAlign: 'right', textTransform: 'uppercase' }}>NRR</Text>
-                </View>
-                {standings.map((s: any, i: number) => {
-                  const losses = (s.matchesPlayed ?? 0) - (s.matchesWon ?? 0);
-                  return (
+              <View>
+                <View style={{ borderRadius: R.lg, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
+                  <View style={{ flexDirection: 'row', backgroundColor: '#0D1220', paddingHorizontal: S.md, paddingVertical: S.sm, borderBottomWidth: 1, borderBottomColor: C.border }}>
+                    {['#', 'Team', 'P', 'W', 'L', 'Pts', 'NRR'].map((h, i) => (
+                      <Text key={h} style={{ width: i === 0 ? 22 : i === 1 ? undefined : i === 5 ? 36 : i === 6 ? 52 : 26, flex: i === 1 ? 1 : undefined, fontFamily: F.semi, fontSize: 10, color: C.textMuted, textAlign: i > 1 ? 'right' : 'left', textTransform: 'uppercase', letterSpacing: 0.4 }}>{h}</Text>
+                    ))}
+                  </View>
+                  {standings.map((s: any, i: number) => (
                     <View key={s.team?.id ?? i} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.md, paddingVertical: 12, borderBottomWidth: i < standings.length - 1 ? 1 : 0, borderBottomColor: C.border, backgroundColor: i < 2 ? 'rgba(99,102,241,0.04)' : undefined }}>
-                      <Text style={{ width: 26, fontFamily: F.bold, fontSize: 13, color: i < 2 ? C.primaryLight : C.textMuted }}>{i + 1}</Text>
+                      <Text style={{ width: 22, fontFamily: F.bold, fontSize: 13, color: i < 2 ? C.primaryLight : C.textMuted }}>{i + 1}</Text>
                       <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
-                        <View style={{ width: 26, height: 26, borderRadius: 7, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontFamily: F.bold, fontSize: 8, color: '#fff' }}>{s.team?.shortName?.slice(0, 3)}</Text>
+                        <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontFamily: F.bold, fontSize: 7, color: '#fff' }}>{s.team?.shortName?.slice(0, 3)}</Text>
                         </View>
-                        <Text style={{ fontFamily: i < 2 ? F.semi : F.reg, fontSize: 13, color: C.text }} numberOfLines={1}>{s.team?.shortName ?? '—'}</Text>
+                        <Text style={{ fontFamily: i < 2 ? F.semi : F.reg, fontSize: 12, color: C.text }} numberOfLines={1}>{s.team?.shortName ?? '—'}</Text>
                       </View>
-                      <Text style={{ width: 28, textAlign: 'right', fontFamily: F.reg, fontSize: 12, color: C.green }}>{s.matchesWon ?? 0}</Text>
-                      <Text style={{ width: 28, textAlign: 'right', fontFamily: F.reg, fontSize: 12, color: C.red }}>{losses}</Text>
-                      <Text style={{ width: 44, textAlign: 'right', fontFamily: F.bold, fontSize: 14, color: C.primary }}>{s.pointsEarned ?? 0}</Text>
-                      <Text style={{ width: 52, textAlign: 'right', fontFamily: F.medium, fontSize: 11, color: s.nrr >= 0 ? C.green : C.red }}>
-                        {s.nrr >= 0 ? '+' : ''}{Number(s.nrr ?? 0).toFixed(3)}
+                      <Text style={{ width: 26, textAlign: 'right', fontFamily: F.reg, fontSize: 12, color: C.textSub }}>{s.matchesPlayed ?? 0}</Text>
+                      <Text style={{ width: 26, textAlign: 'right', fontFamily: F.reg, fontSize: 12, color: C.green }}>{s.matchesWon ?? 0}</Text>
+                      <Text style={{ width: 26, textAlign: 'right', fontFamily: F.reg, fontSize: 12, color: C.red }}>{s.matchesLost ?? (s.matchesPlayed ?? 0) - (s.matchesWon ?? 0)}</Text>
+                      <Text style={{ width: 36, textAlign: 'right', fontFamily: F.bold, fontSize: 14, color: C.primary }}>{s.pointsEarned ?? 0}</Text>
+                      <Text style={{ width: 52, textAlign: 'right', fontFamily: F.medium, fontSize: 11, color: (s.nrr ?? 0) >= 0 ? C.green : C.red }}>
+                        {(s.nrr ?? 0) >= 0 ? '+' : ''}{Number(s.nrr ?? 0).toFixed(3)}
                       </Text>
                     </View>
-                  );
-                })}
+                  ))}
+                </View>
+                <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted, textAlign: 'center', marginTop: S.md }}>
+                  NRR = Net Run Rate  ·  Top 2 qualify
+                </Text>
               </View>
             ) : (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>

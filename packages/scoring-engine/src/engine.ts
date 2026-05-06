@@ -1,26 +1,29 @@
 import {
   BallEvent,
-  InningsState,
+  BallValidationContext,
   BatsmanInnings,
   BowlerInnings,
   CurrentOverState,
   ExtrasBreakdown,
   FallOfWicket,
-  RunValue,
-  MatchState,
+  InningsState,
+  MatchFormat,
+  Partnership,
 } from '@cricket-os/shared';
-import { BALLS_PER_OVER, ILLEGAL_DELIVERY_EXTRAS } from '@cricket-os/shared';
+import {
+  BALLS_PER_OVER,
+  BOWLER_CREDITED_WICKETS,
+  BOWLER_MAX_OVERS_RATIO,
+  FREE_HIT_SAFE_WICKET_TYPES,
+  ILLEGAL_DELIVERY_EXTRAS,
+  POWERPLAY_OVERS,
+} from '@cricket-os/shared';
 
 // ============================================================
-// SCORING ENGINE
-//
-// Pure functions — no side effects, no DB calls.
-// The API layer passes ball events here, gets back derived state.
-// This is the single source of scoring truth.
+// SCORING ENGINE  — pure functions, no DB calls.
+// Single source of truth for all cricket scoring logic.
 // ============================================================
 
-// Compute full innings state by replaying all ball events in order.
-// This is O(n) in balls but called infrequently (on load / undo).
 export function computeInningsState(
   events: BallEvent[],
   battingTeamId: string,
@@ -29,133 +32,222 @@ export function computeInningsState(
   inningsNumber: number,
   target?: number
 ): InningsState {
-  const batsmen = new Map<string, BatsmanInnings>();
-  const bowlers = new Map<string, BowlerInnings>();
+  const batsmen   = new Map<string, BatsmanInnings>();
+  const bowlers   = new Map<string, BowlerInnings>();
   const fallOfWickets: FallOfWicket[] = [];
-  let totalRuns = 0;
-  let totalWickets = 0;
-  let currentStrikerIndex = 0; // We track strikerId from events
+
+  let totalRuns      = 0;
+  let totalWickets   = 0;
+  let completedOvers = 0;
   let currentBallInOver = 0;
-  let currentOverNumber = 0;
+
+  const extras: ExtrasBreakdown = { wides: 0, noBalls: 0, byes: 0, legByes: 0, penalties: 0, total: 0 };
+
+  // Strike tracking — derived purely from event order + rotation rules
+  let strikerId: string | null    = null;
+  let nonStrikerId: string | null = null;
+
+  // Free hit — the ball AFTER a no-ball is a free hit
+  let nextIsFreeHit = false;
+
+  // Maiden tracking — track each over's run/illegality state
+  let overRunsFromBat  = 0;  // bat runs + no-ball extras (not byes/legbyes)
+  let overHasWideOrNB  = false;
   const overBalls: BallEvent[] = [];
 
-  const extras: ExtrasBreakdown = {
-    wides: 0, noBalls: 0, byes: 0, legByes: 0, penalties: 0, total: 0,
-  };
+  // Partnership tracking
+  let partnershipRuns  = 0;
+  let partnershipBalls = 0;
+  let partnershipStart = 0; // totalRuns at partnership start
 
   for (const event of events) {
-    const runsOnBall = event.runs + (event.extras?.runs ?? 0);
+    const totalExtras = event.extras?.runs ?? 0;
+    const runsOnBall  = event.runs + totalExtras;
     totalRuns += runsOnBall;
 
-    // Track batsman
+    // ── Batsman init ──────────────────────────────────────
     if (!batsmen.has(event.batsmanId)) {
       batsmen.set(event.batsmanId, initBatsman(event.batsmanId));
     }
     const batsman = batsmen.get(event.batsmanId)!;
 
-    // Track bowler
+    // ── Bowler init ───────────────────────────────────────
     if (!bowlers.has(event.bowlerId)) {
       bowlers.set(event.bowlerId, initBowler(event.bowlerId));
     }
     const bowler = bowlers.get(event.bowlerId)!;
 
-    // Apply extras
-    if (event.extras) {
-      const { type, runs: eRuns } = event.extras;
-      switch (type) {
-        case 'WIDE': extras.wides += eRuns; bowler.wides++; break;
-        case 'NO_BALL': extras.noBalls += eRuns; bowler.noBalls++; break;
-        case 'BYE': extras.byes += eRuns; break;
-        case 'LEG_BYE': extras.legByes += eRuns; break;
-        case 'PENALTY': extras.penalties += eRuns; break;
+    // ── Extras ────────────────────────────────────────────
+    const extraType = event.extras?.type ?? null;
+    if (extraType) {
+      switch (extraType) {
+        case 'WIDE':    extras.wides    += totalExtras; bowler.wides++;  break;
+        case 'NO_BALL': extras.noBalls  += totalExtras; bowler.noBalls++; break;
+        case 'BYE':     extras.byes     += totalExtras; break;
+        case 'LEG_BYE': extras.legByes  += totalExtras; break;
+        case 'PENALTY': extras.penalties += totalExtras; break;
       }
-      extras.total += eRuns;
+      extras.total += totalExtras;
     }
 
-    // Apply runs to batsman (only for genuine bat runs — not byes/leg byes/wides)
-    const isBatRun = !event.extras || (event.extras.type !== 'BYE' && event.extras.type !== 'LEG_BYE' && event.extras.type !== 'WIDE');
+    // ── Bat runs (not byes/legbyes/wides) ────────────────
+    const isBatRun = !extraType || (extraType !== 'BYE' && extraType !== 'LEG_BYE' && extraType !== 'WIDE');
     if (isBatRun && event.runs > 0) {
       batsman.runs += event.runs;
       if (event.runs === 4) batsman.fours++;
       if (event.runs === 6) batsman.sixes++;
     }
 
-    // Legal ball counts for batsman balls faced (wides don't count)
-    if (event.extras?.type !== 'WIDE') {
+    // ── Bowler runs (bat + no-ball extras; byes/legbyes not charged) ──
+    if (extraType !== 'BYE' && extraType !== 'LEG_BYE') {
+      bowler.runs += event.runs + totalExtras;
+    }
+
+    // ── Balls faced (wides don't count) ──────────────────
+    if (extraType !== 'WIDE') {
       batsman.ballsFaced++;
     }
 
-    // Bowler runs = bat runs + no-ball runs (byes/leg byes NOT charged to bowler)
-    if (!event.extras || event.extras.type !== 'BYE' && event.extras.type !== 'LEG_BYE') {
-      bowler.runs += event.runs + (event.extras?.runs ?? 0);
-    }
-
-    // Wicket
+    // ── Wicket ────────────────────────────────────────────
     if (event.wicket) {
+      // On a free hit, only certain wicket types are allowed (run-out etc.)
+      // The API enforces this; engine just records it.
       totalWickets++;
-      batsman.isOut = true;
+      batsman.isOut   = true;
       batsman.isNotOut = false;
-      batsman.wicket = event.wicket;
+      batsman.wicket  = event.wicket;
 
-      // Wicket credited to bowler (not for run-outs, retired, obstructing)
-      const bowlerWicketTypes = ['BOWLED', 'CAUGHT', 'LBW', 'STUMPED', 'HIT_WICKET'];
-      if (bowlerWicketTypes.includes(event.wicket.type)) {
+      if (BOWLER_CREDITED_WICKETS.includes(event.wicket.type as any)) {
         bowler.wickets++;
       }
 
       fallOfWickets.push({
         wicketNumber: totalWickets,
-        runs: totalRuns,
-        overs: event.overNumber + (event.ballNumber + 1) / 10,
+        runs:  totalRuns,
+        overs: completedOvers + currentBallInOver / 10,
         playerId: event.wicket.outBatsmanId,
       });
+
+      // Strike: if the out batsman was the striker, new batsman takes strike
+      // If non-striker was run out, non-striker changes (strike stays)
+      const outWasStriker = event.wicket.outBatsmanId === strikerId;
+      if (outWasStriker) {
+        strikerId = null; // new batsman will set this on their first ball
+      } else {
+        // non-striker was out (e.g. run out at non-striker end)
+        nonStrikerId = null;
+      }
+
+      // Reset partnership
+      partnershipRuns  = 0;
+      partnershipBalls = 0;
+      partnershipStart = totalRuns;
     }
 
-    // Legal ball — advance over counter
-    if (event.isLegalBall) {
+    // ── Legal ball counting and over management ───────────
+    const isLegal = event.isLegalBall;
+    if (isLegal) {
       currentBallInOver++;
-      batsman.ballsFaced = batsmen.get(event.batsmanId)!.ballsFaced; // already incremented above
+      partnershipBalls++;
     }
 
-    // Over completed
-    if (event.isLegalBall && currentBallInOver >= BALLS_PER_OVER) {
+    // Track for maiden calculation
+    if (extraType === 'WIDE' || extraType === 'NO_BALL') overHasWideOrNB = true;
+    if (isBatRun && event.runs > 0)  overRunsFromBat += event.runs;
+    if (extraType === 'NO_BALL')     overRunsFromBat += totalExtras;
+
+    // ── Over complete ─────────────────────────────────────
+    if (isLegal && currentBallInOver >= BALLS_PER_OVER) {
+      // Check maiden: no runs off bat, no wides/no-balls in this over
+      const isMaiden = overRunsFromBat === 0 && !overHasWideOrNB;
+      if (isMaiden) bowler.maidens++;
+
+      // Record completed overs for the bowler
       bowler.overs = Math.floor(bowler.overs) + 1;
+
+      completedOvers++;
       currentBallInOver = 0;
-      currentOverNumber++;
+      overBalls.length = 0;
+      overRunsFromBat  = 0;
+      overHasWideOrNB  = false;
+
+      // End of over: striker and non-striker swap
+      if (!event.wicket) {
+        [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
+      }
+    } else if (isLegal && !event.wicket) {
+      // Mid-over: rotate strike on odd runs
+      const runsForRotation = isBatRun ? event.runs : 0; // byes/legbyes DO rotate
+      const actualRunsForRotation = event.runs; // all runs count for rotation
+      if (actualRunsForRotation % 2 !== 0) {
+        [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
+      }
     }
 
-    // Auto strike rotation
-    if (event.isLegalBall) {
-      const rotationRuns = event.runs + (isBatRun ? 0 : 0); // use actual runs for rotation
-      const oddRuns = event.runs % 2 !== 0;
-      if (oddRuns) {
-        // Strike rotates
-      }
-      if (currentBallInOver === 0 && !event.wicket) {
-        // End of over — strike automatically rotates
-      }
+    // Set striker from current ball if not yet known
+    if (strikerId === null) {
+      strikerId = event.batsmanId;
     }
+    if (strikerId === event.batsmanId && nonStrikerId === null) {
+      // non-striker still unknown — will be set when they appear
+    }
+
+    // ── Partnership accumulation ──────────────────────────
+    if (isBatRun) partnershipRuns += event.runs;
+    // byes/legbyes also add to partnership total
+    if (!isBatRun && extraType !== 'WIDE' && extraType !== 'NO_BALL') {
+      partnershipRuns += totalExtras;
+    }
+
+    // ── Free hit tracking ─────────────────────────────────
+    nextIsFreeHit = extraType === 'NO_BALL';
 
     // Track current over balls
-    if (event.overNumber === currentOverNumber) {
-      overBalls.push(event);
-    }
+    overBalls.push(event);
   }
 
-  // Compute strike rates
-  for (const [, bat] of batsmen) {
+  // ── Set isOnStrike in batsmen map ─────────────────────────
+  for (const [id, bat] of batsmen) {
+    bat.isOnStrike = id === strikerId;
+    // Strike rate
     bat.strikeRate = bat.ballsFaced > 0 ? (bat.runs / bat.ballsFaced) * 100 : 0;
   }
+
+  // ── Bowler economy ────────────────────────────────────────
   for (const [, bowl] of bowlers) {
-    const completedOvers = Math.floor(bowl.overs) + (bowl.overs % 1) * 10 / BALLS_PER_OVER;
-    bowl.economy = completedOvers > 0 ? bowl.runs / completedOvers : 0;
+    const overs = bowl.overs + (completedOvers === Math.floor(bowl.overs) ? currentBallInOver / BALLS_PER_OVER : 0);
+    bowl.economy = overs > 0 ? bowl.runs / overs : 0;
   }
 
+  // ── Determine non-striker: active batsman who is not the striker ──
+  const activeBatsmen = Array.from(batsmen.values()).filter(b => !b.isOut);
+  if (strikerId && !nonStrikerId && activeBatsmen.length >= 2) {
+    const other = activeBatsmen.find(b => b.playerId !== strikerId);
+    if (other) nonStrikerId = other.playerId;
+  }
+
+  // ── Current partnership ───────────────────────────────────
+  let currentPartnership: Partnership | null = null;
+  if (strikerId && nonStrikerId) {
+    currentPartnership = {
+      batsmanId1: strikerId,
+      batsmanId2: nonStrikerId,
+      runs:  partnershipRuns,
+      balls: partnershipBalls,
+    };
+  }
+
+  // ── Innings complete? ─────────────────────────────────────
+  const maxOversFromContext = 0; // passed separately; checked in validateBallEvent
+  const isComplete = totalWickets >= 10;
+
   const currentOverState: CurrentOverState = {
-    overNumber: currentOverNumber,
+    overNumber:          completedOvers,
     legalBallsDelivered: currentBallInOver,
-    balls: overBalls.filter(e => e.overNumber === currentOverNumber),
-    bowlerId: events[events.length - 1]?.bowlerId ?? '',
+    balls:               overBalls.slice(),
+    bowlerId:            events[events.length - 1]?.bowlerId ?? '',
+    runsInOver:          overRunsFromBat,
+    isMaidenCandidate:   !overHasWideOrNB && overRunsFromBat === 0,
   };
 
   return {
@@ -165,53 +257,86 @@ export function computeInningsState(
     bowlingTeamId,
     totalRuns,
     totalWickets,
-    totalOvers: currentOverNumber + currentBallInOver / 10,
+    totalOvers: completedOvers + currentBallInOver / 10,
     extras,
-    currentOver: currentOverState,
-    batsmen: Array.from(batsmen.values()),
-    bowlers: Array.from(bowlers.values()),
+    currentOver:      currentOverState,
+    batsmen:          Array.from(batsmen.values()),
+    bowlers:          Array.from(bowlers.values()),
     fallOfWickets,
+    currentPartnership,
+    currentStrikerId:    strikerId,
+    currentNonStrikerId: nonStrikerId,
+    nextBallIsFreeHit:   nextIsFreeHit,
+    isComplete,
     target,
   };
 }
 
-// Validate a ball event before applying it.
-// Returns null if valid, or an error message string.
+// ──────────────────────────────────────────────────────────────
+// VALIDATION
+// ──────────────────────────────────────────────────────────────
+
 export function validateBallEvent(
-  event: Partial<BallEvent>,
-  innings: InningsState,
-  maxOvers: number
+  event: Partial<BallEvent> & { wicket?: any },
+  ctx: BallValidationContext
 ): string | null {
+  const { inningsState, maxOvers, matchFormat, lastOverBowlerId, bowlerOverCounts } = ctx;
+
   if (!event.batsmanId) return 'Batsman is required';
-  if (!event.bowlerId) return 'Bowler is required';
-  if (event.runs === undefined || event.runs < 0 || event.runs > 6) return 'Invalid run value';
-  if (innings.totalWickets >= 10) return 'All wickets fallen';
-  if (maxOvers > 0 && innings.totalOvers >= maxOvers) return 'Over limit reached';
+  if (!event.bowlerId)  return 'Bowler is required';
+  if (event.runs === undefined || event.runs < 0 || event.runs > 6) return 'Invalid run value (0–6)';
+
+  // Innings already complete
+  if (inningsState.totalWickets >= 10) return 'All wickets fallen — innings is complete';
+  if (maxOvers > 0 && inningsState.totalOvers >= maxOvers) return 'Over limit reached — innings is complete';
+
+  // Bowler overs limit
+  if (maxOvers > 0) {
+    const maxBowlerOvers = Math.round(maxOvers * BOWLER_MAX_OVERS_RATIO);
+    const bowlerDone     = bowlerOverCounts[event.bowlerId!] ?? 0;
+    if (bowlerDone >= maxBowlerOvers) {
+      return `Bowler has already bowled their maximum ${maxBowlerOvers} overs`;
+    }
+  }
+
+  // No consecutive overs by the same bowler
+  const isStartOfNewOver = inningsState.currentOver.legalBallsDelivered === 0;
+  if (isStartOfNewOver && lastOverBowlerId && lastOverBowlerId === event.bowlerId) {
+    return 'Same bowler cannot bowl consecutive overs';
+  }
+
+  // Free hit: only run-out type wickets are allowed
+  if (inningsState.nextBallIsFreeHit && event.wicket) {
+    const safeOnFreeHit = !FREE_HIT_SAFE_WICKET_TYPES.includes(event.wicket.type);
+    if (!safeOnFreeHit) {
+      return `Batsman cannot be dismissed ${event.wicket.type} on a free hit`;
+    }
+  }
+
   return null;
 }
 
-// Determine if strike should rotate after this ball
-export function shouldRotateStrike(event: BallEvent, isEndOfOver: boolean): boolean {
-  if (event.wicket) return false; // new batsman comes in — handled separately
+// ──────────────────────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────────────────────
+
+export function shouldRotateStrike(runs: number, isEndOfOver: boolean): boolean {
   if (isEndOfOver) return true;
-  // Odd runs = strike rotates
-  return event.runs % 2 !== 0;
+  return runs % 2 !== 0;
 }
 
-// Calculate required run rate
 export function calculateRRR(
   target: number,
   currentRuns: number,
   currentOvers: number,
   maxOvers: number
 ): number {
-  const runsNeeded = target - currentRuns;
+  const runsNeeded    = target - currentRuns;
   const oversRemaining = maxOvers - currentOvers;
   if (oversRemaining <= 0) return Infinity;
   return runsNeeded / oversRemaining;
 }
 
-// Calculate net run rate for a team across matches
 export function calculateNRR(
   runsScored: number,
   oversPlayedBatting: number,
@@ -222,38 +347,30 @@ export function calculateNRR(
   return (runsScored / oversPlayedBatting) - (runsConceded / oversPlayedBowling);
 }
 
-// Format overs display: 3.4 means 3 overs 4 balls
 export function formatOvers(overs: number): string {
   const completed = Math.floor(overs);
-  const balls = Math.round((overs - completed) * 10);
+  const balls     = Math.round((overs - completed) * 10);
   return `${completed}.${balls}`;
 }
 
-// --- Private helpers ---
+export function isPowerplay(overNumber: number, format: MatchFormat): boolean {
+  const pp = POWERPLAY_OVERS[format];
+  if (!pp) return false;
+  return overNumber >= pp.start && overNumber <= pp.end;
+}
+
+export function maxBowlerOvers(totalOvers: number): number {
+  return Math.round(totalOvers * BOWLER_MAX_OVERS_RATIO);
+}
+
+// ──────────────────────────────────────────────────────────────
+// PRIVATE INITIALISERS
+// ──────────────────────────────────────────────────────────────
 
 function initBatsman(playerId: string): BatsmanInnings {
-  return {
-    playerId,
-    runs: 0,
-    ballsFaced: 0,
-    fours: 0,
-    sixes: 0,
-    strikeRate: 0,
-    isOnStrike: false,
-    isOut: false,
-    isNotOut: true,
-  };
+  return { playerId, runs: 0, ballsFaced: 0, fours: 0, sixes: 0, strikeRate: 0, isOnStrike: false, isOut: false, isNotOut: true };
 }
 
 function initBowler(playerId: string): BowlerInnings {
-  return {
-    playerId,
-    overs: 0,
-    maidens: 0,
-    runs: 0,
-    wickets: 0,
-    economy: 0,
-    wides: 0,
-    noBalls: 0,
-  };
+  return { playerId, overs: 0, maidens: 0, runs: 0, wickets: 0, economy: 0, wides: 0, noBalls: 0 };
 }

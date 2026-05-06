@@ -138,14 +138,78 @@ leaguesRouter.post('/:id/teams', requireAuth, async (req: AuthRequest, res, next
   } catch (err) { next(err); }
 });
 
-// GET /api/v1/leagues/:id/standings — points table
+// GET /api/v1/leagues/:id/standings — live points table with computed NRR
 leaguesRouter.get('/:id/standings', async (req, res, next) => {
   try {
-    const standings = await prisma.leagueTeam.findMany({
-      where: { leagueId: req.params.id },
-      include: { team: { select: { id: true, name: true, shortName: true, logoUrl: true } } },
-      orderBy: [{ pointsEarned: 'desc' }, { nrr: 'desc' }],
-    });
+    const [leagueTeams, matches] = await Promise.all([
+      prisma.leagueTeam.findMany({
+        where: { leagueId: req.params.id },
+        include: { team: { select: { id: true, name: true, shortName: true, logoUrl: true } } },
+      }),
+      prisma.match.findMany({
+        where: { leagueId: req.params.id, status: 'COMPLETED' },
+        include: {
+          innings: { select: { battingTeamId: true, totalRuns: true, completedOvers: true, extraBalls: true, isCompleted: true } },
+        },
+      }),
+    ]);
+
+    // Build standings map
+    const stats: Record<string, {
+      teamId: string; played: number; won: number; lost: number; tied: number; noResult: number; points: number;
+      runsScored: number; oversBatted: number; runsConceded: number; oversBowled: number;
+    }> = {};
+
+    for (const lt of leagueTeams) {
+      stats[lt.teamId] = { teamId: lt.teamId, played: 0, won: 0, lost: 0, tied: 0, noResult: 0, points: 0, runsScored: 0, oversBatted: 0, runsConceded: 0, oversBowled: 0 };
+    }
+
+    for (const m of matches) {
+      const home = m.homeTeamId; const away = m.awayTeamId;
+      if (!stats[home] || !stats[away]) continue;
+
+      stats[home].played++; stats[away].played++;
+
+      const toOvers = (inn: any) => (inn.completedOvers ?? 0) + (inn.extraBalls ?? 0) / 6;
+
+      for (const inn of m.innings) {
+        const batting  = inn.battingTeamId;
+        const fielding = batting === home ? away : home;
+        const overs    = toOvers(inn);
+        if (stats[batting]) { stats[batting].runsScored += inn.totalRuns; stats[batting].oversBatted += overs; }
+        if (stats[fielding]) { stats[fielding].runsConceded += inn.totalRuns; stats[fielding].oversBowled += overs; }
+      }
+
+      if (m.resultType === 'WIN' && m.winnerId) {
+        const loser = m.winnerId === home ? away : home;
+        stats[m.winnerId].won++;  stats[m.winnerId].points += 2;
+        stats[loser].lost++;
+      } else if (m.resultType === 'TIE') {
+        stats[home].tied++; stats[away].tied++;
+        stats[home].points += 1; stats[away].points += 1;
+      } else if (m.resultType === 'NO_RESULT') {
+        stats[home].noResult++; stats[away].noResult++;
+        stats[home].points += 1; stats[away].points += 1;
+      }
+    }
+
+    // Compute NRR and merge with leagueTeam data
+    const standings = leagueTeams.map(lt => {
+      const s = stats[lt.teamId];
+      const nrr = s && s.oversBatted > 0 && s.oversBowled > 0
+        ? (s.runsScored / s.oversBatted) - (s.runsConceded / s.oversBowled)
+        : 0;
+      return {
+        ...lt,
+        matchesPlayed: s?.played ?? lt.matchesPlayed,
+        matchesWon:    s?.won    ?? lt.matchesWon,
+        matchesLost:   s?.lost   ?? 0,
+        matchesTied:   s?.tied   ?? 0,
+        pointsEarned:  s?.points ?? lt.pointsEarned,
+        nrr:           parseFloat(nrr.toFixed(3)),
+      };
+    }).sort((a, b) => b.pointsEarned - a.pointsEarned || b.nrr - a.nrr);
+
     res.json({ success: true, data: standings });
   } catch (err) { next(err); }
 });
@@ -174,5 +238,48 @@ leaguesRouter.get('/:id/revenue', requireAuth, async (req: AuthRequest, res, nex
         payments,
       },
     });
+  } catch (err) { next(err); }
+});
+
+
+// GET /api/v1/leagues/:id/bracket — full tournament bracket
+leaguesRouter.get('/:id/bracket', async (req, res, next) => {
+  try {
+    const stages = await prisma.tournamentStage.findMany({
+      where: { leagueId: req.params.id },
+      include: {
+        fixtures: {
+          include: {
+            match: {
+              select: {
+                id: true, status: true, homeTeamId: true, awayTeamId: true,
+                homeTeam: { select: { id: true, name: true, shortName: true } },
+                awayTeam: { select: { id: true, name: true, shortName: true } },
+                winnerId: true, resultType: true,
+                innings: { select: { inningsNumber: true, totalRuns: true, totalWickets: true, completedOvers: true } },
+              },
+            },
+          },
+          orderBy: { position: 'asc' },
+        },
+      },
+      orderBy: { stageOrder: 'asc' },
+    });
+    res.json({ success: true, data: stages });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v1/leagues/:id/bracket — create bracket stages (organizer only)
+leaguesRouter.post('/:id/bracket', requireAuth, async (req: AuthRequest, res, next) => {
+  try {
+    const { stages } = req.body as { stages: { name: string; stageType: string; stageOrder: number; teamsAdvance: number }[] };
+    if (!stages?.length) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'stages array required' } });
+
+    const created = await prisma.$transaction(
+      stages.map(s => prisma.tournamentStage.create({
+        data: { leagueId: req.params.id, name: s.name, stageType: s.stageType as any, stageOrder: s.stageOrder, teamsAdvance: s.teamsAdvance ?? 2 },
+      }))
+    );
+    res.status(201).json({ success: true, data: created });
   } catch (err) { next(err); }
 });

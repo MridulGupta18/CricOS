@@ -80,6 +80,7 @@ model Player {
   bowlingRecords  BallEvent[]       @relation("BowlerEvents")
   fieldingRecords WicketEvent[]     @relation("FielderEvents")
   outRecords      WicketEvent[]     @relation("OutBatsmanEvents")
+  careerStats     PlayerCareerStats?
 
   // Full-text search vector — updated by trigger
   searchVector Unsupported("tsvector")?
@@ -172,11 +173,12 @@ model League {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  organizer User         @relation(fields: [organizerId], references: [id])
+  organizer User              @relation(fields: [organizerId], references: [id])
   teams     LeagueTeam[]
   matches   Match[]
   sponsors  Sponsor[]
   payments  Payment[]
+  stages    TournamentStage[]
 
   searchVector Unsupported("tsvector")?
 
@@ -243,12 +245,13 @@ model Match {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  homeTeam Team    @relation("HomeTeam", fields: [homeTeamId], references: [id])
-  awayTeam Team    @relation("AwayTeam", fields: [awayTeamId], references: [id])
-  league   League? @relation(fields: [leagueId], references: [id])
-  scorer   User?   @relation("MatchScorer", fields: [scorerId], references: [id])
-  creator  User    @relation("MatchCreator", fields: [creatorId], references: [id])
-  innings  Innings[]
+  homeTeam        Team                @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam        Team                @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  league          League?             @relation(fields: [leagueId], references: [id])
+  scorer          User?               @relation("MatchScorer", fields: [scorerId], references: [id])
+  creator         User                @relation("MatchCreator", fields: [creatorId], references: [id])
+  innings         Innings[]
+  tournamentSlot  TournamentFixture?
 
   searchVector Unsupported("tsvector")?
 
@@ -271,6 +274,7 @@ enum MatchStatus {
   TOSS
   IN_PROGRESS
   INNINGS_BREAK
+  SUPER_OVER
   COMPLETED
   ABANDONED
   CANCELLED
@@ -338,6 +342,7 @@ model BallEvent {
   extraType      ExtraType?
   extraRuns      Int       @default(0)
   isLegalBall    Boolean   @default(true)
+  isFreeHit      Boolean   @default(false)
   isWicket       Boolean   @default(false)
   isBoundary     Boolean   @default(false)
   isSix          Boolean   @default(false)
@@ -389,6 +394,46 @@ enum WicketType {
   TIMED_OUT
 }
 
+// ─── PLAYER CAREER STATISTICS ───────────────────────────────
+// Denormalized aggregate — recomputed after each match the player participates in.
+
+model PlayerCareerStats {
+  id              String   @id @default(cuid())
+  playerId        String   @unique
+  // Batting
+  battingMatches  Int      @default(0)
+  battingInnings  Int      @default(0)
+  battingRuns     Int      @default(0)
+  battingBalls    Int      @default(0)
+  battingHighScore Int     @default(0)
+  battingFours    Int      @default(0)
+  battingSixes    Int      @default(0)
+  battingHalfCenturies Int @default(0)  // 50+
+  battingCenturies     Int @default(0)  // 100+
+  battingNotOuts  Int      @default(0)
+  battingAverage  Float    @default(0)
+  battingStrikeRate Float  @default(0)
+  // Bowling
+  bowlingMatches  Int      @default(0)
+  bowlingBallsDelivered Int @default(0)
+  bowlingRuns     Int      @default(0)
+  bowlingWickets  Int      @default(0)
+  bowlingMaidens  Int      @default(0)
+  bowlingBestFiguresWickets Int @default(0)
+  bowlingBestFiguresRuns    Int @default(0)
+  bowlingAverage  Float    @default(0)
+  bowlingEconomy  Float    @default(0)
+  bowlingStrikeRate Float  @default(0)
+  fiveWicketHauls Int      @default(0)
+  // Fielding
+  catches         Int      @default(0)
+  runOuts         Int      @default(0)
+  stumpings       Int      @default(0)
+  updatedAt       DateTime @updatedAt
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
 // ─── SPONSORSHIPS & MONETIZATION ────────────────────────────
 
 model Sponsor {
@@ -433,6 +478,41 @@ model Payment {
   @@index([leagueId])
   @@index([teamId])
   @@index([stripeSessionId])
+}
+
+// ─── TOURNAMENT BRACKET ─────────────────────────────────────
+
+model TournamentStage {
+  id          String   @id @default(cuid())
+  leagueId    String
+  name        String   // "Group A", "Quarter Finals", "Semi Finals", "Final"
+  stageType   StageType
+  stageOrder  Int      // 1 = group, 2 = QF, 3 = SF, 4 = Final
+  teamsAdvance Int     @default(2)  // how many teams advance from this stage
+  createdAt   DateTime @default(now())
+
+  league   League          @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  fixtures TournamentFixture[]
+}
+
+model TournamentFixture {
+  id        String   @id @default(cuid())
+  stageId   String
+  matchId   String?  @unique
+  team1Id   String?
+  team2Id   String?
+  winnerId  String?
+  position  Int      // slot position in bracket
+  createdAt DateTime @default(now())
+
+  stage TournamentStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  match Match?          @relation(fields: [matchId], references: [id])
+}
+
+enum StageType {
+  GROUP
+  KNOCKOUT
+  FINAL
 }
 
 // ─── SEARCH TRACKING ────────────────────────────────────────

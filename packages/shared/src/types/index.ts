@@ -44,21 +44,21 @@ export interface BallEvent {
   extras: ExtraRecord | null;
   wicket: WicketRecord | null;
   isLegalBall: boolean;     // false for wides/no-balls
+  isFreeHit: boolean;       // true if this ball is a free hit (after no-ball)
   timestamp: string;
-  // For offline sync
   clientId: string;         // UUID generated client-side (idempotency key)
 }
 
 export interface ExtraRecord {
   type: ExtraType;
-  runs: number;             // extras runs (1 for wide/no-ball minimum)
+  runs: number;
 }
 
 export interface WicketRecord {
   type: WicketType;
   outBatsmanId: string;
-  fielderId?: string;       // for caught/run-out/stumped
-  newBatsmanId?: string;    // pre-populated when next batsman is known
+  fielderId?: string;
+  newBatsmanId?: string;
 }
 
 // --- MATCH STATE ---
@@ -66,7 +66,7 @@ export interface WicketRecord {
 export interface MatchState {
   matchId: string;
   status: MatchStatus;
-  currentInnings: number;   // 1 or 2
+  currentInnings: number;
   innings: InningsState[];
   toss: TossResult | null;
   result: MatchResult | null;
@@ -77,6 +77,7 @@ export type MatchStatus =
   | 'TOSS'
   | 'IN_PROGRESS'
   | 'INNINGS_BREAK'
+  | 'SUPER_OVER'
   | 'COMPLETED'
   | 'ABANDONED'
   | 'CANCELLED';
@@ -88,13 +89,18 @@ export interface InningsState {
   bowlingTeamId: string;
   totalRuns: number;
   totalWickets: number;
-  totalOvers: number;       // completed overs (float: 3.4 = 3 overs 4 balls)
+  totalOvers: number;
   extras: ExtrasBreakdown;
   currentOver: CurrentOverState;
   batsmen: BatsmanInnings[];
   bowlers: BowlerInnings[];
   fallOfWickets: FallOfWicket[];
-  target?: number;          // set after first innings
+  currentPartnership: Partnership | null;
+  currentStrikerId: string | null;
+  currentNonStrikerId: string | null;
+  nextBallIsFreeHit: boolean;
+  isComplete: boolean;       // true when 10 wkts or overs exhausted
+  target?: number;
 }
 
 export interface CurrentOverState {
@@ -102,6 +108,8 @@ export interface CurrentOverState {
   legalBallsDelivered: number;
   balls: BallEvent[];
   bowlerId: string;
+  runsInOver: number;        // used for maiden calculation
+  isMaidenCandidate: boolean; // true so far no scoring runs/wides/noballs
 }
 
 export interface ExtrasBreakdown {
@@ -128,7 +136,7 @@ export interface BatsmanInnings {
 
 export interface BowlerInnings {
   playerId: string;
-  overs: number;
+  overs: number;            // completed overs (integer part) + balls in current spell
   maidens: number;
   runs: number;
   wickets: number;
@@ -142,18 +150,36 @@ export interface FallOfWicket {
   runs: number;
   overs: number;
   playerId: string;
+  batsmanName?: string;
+}
+
+export interface Partnership {
+  batsmanId1: string;
+  batsmanId2: string;
+  runs: number;
+  balls: number;
 }
 
 export interface TossResult {
-  winnerId: string;         // team that won toss
+  winnerId: string;
   decision: 'BAT' | 'BOWL';
 }
 
 export interface MatchResult {
-  winnerId: string | null;  // null = tie/no result
+  winnerId: string | null;
   margin?: number;
   marginType?: 'RUNS' | 'WICKETS';
   resultType: 'WIN' | 'TIE' | 'NO_RESULT' | 'DRAW';
+}
+
+// --- VALIDATION CONTEXT (passed to engine for cross-ball rules) ---
+
+export interface BallValidationContext {
+  inningsState: InningsState;
+  maxOvers: number;
+  matchFormat: MatchFormat;
+  lastOverBowlerId?: string;   // for consecutive-over check
+  bowlerOverCounts: Record<string, number>; // playerId → completed overs
 }
 
 // --- ENTITIES ---
@@ -171,7 +197,7 @@ export interface Player {
 export interface Team {
   id: string;
   name: string;
-  shortName: string;        // e.g., "RCB", "MI"
+  shortName: string;
   logoUrl?: string;
   players: Player[];
 }
@@ -188,7 +214,7 @@ export interface Match {
   leagueId?: string;
   scorerId?: string;
   isPublic: boolean;
-  shareToken: string;       // public shareable URL slug
+  shareToken: string;
   status: MatchStatus;
 }
 
@@ -204,7 +230,7 @@ export interface League {
   format: MatchFormat;
   startDate?: string;
   endDate?: string;
-  registrationFee?: number; // in paise/cents
+  registrationFee?: number;
   currency: string;
   isPublic: boolean;
   status: LeagueStatus;
@@ -232,7 +258,7 @@ export interface SearchResult {
   subtitle?: string;
   avatarUrl?: string;
   href: string;
-  matchScore?: number;      // fuzzy match confidence
+  matchScore?: number;
 }
 
 // --- API RESPONSE WRAPPERS ---
@@ -259,7 +285,8 @@ export interface ApiError {
 // --- REAL-TIME SOCKET EVENTS ---
 
 export type SocketEvent =
-  | { type: 'BALL_SCORED'; payload: BallEvent }
-  | { type: 'INNINGS_CHANGED'; payload: { inningsNumber: number } }
+  | { type: 'BALL_SCORED';          payload: BallEvent }
+  | { type: 'INNINGS_CHANGED';      payload: { inningsNumber: number } }
   | { type: 'MATCH_STATUS_CHANGED'; payload: { status: MatchStatus } }
-  | { type: 'MATCH_RESULT'; payload: MatchResult };
+  | { type: 'MATCH_RESULT';         payload: MatchResult }
+  | { type: 'INNINGS_COMPLETE';     payload: { inningsId: string; reason: 'ALL_OUT' | 'OVERS_COMPLETE' } };

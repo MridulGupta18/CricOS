@@ -65,6 +65,7 @@ export default function RootLayout() {
             <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
             <Stack.Screen name="auth/register" options={{ presentation: 'modal' }} />
             <Stack.Screen name="search" options={{ presentation: 'fullScreenModal' }} />
+            <Stack.Screen name="player/[id]" options={{ presentation: 'card' }} />
           </Stack>
           <StatusBar style="auto" />
           <Toast />

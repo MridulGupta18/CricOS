@@ -76,8 +76,10 @@ export const teamsApi = {
 };
 
 export const playersApi = {
-  get: (id: string) => apiClient.get(`/players/${id}`),
-  create: (data: unknown) => apiClient.post('/players', data),
+  get:        (id: string)        => apiClient.get(`/players/${id}`),
+  getStats:   (id: string)        => apiClient.get(`/players/${id}/stats`),
+  create:     (data: unknown)     => apiClient.post('/players', data),
+  update:     (id: string, data: unknown) => apiClient.patch(`/players/${id}`, data),
 };
 
 export const searchApi = {
