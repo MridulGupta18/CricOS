@@ -110,13 +110,8 @@ export function LeagueDashboardScreen() {
   const recent = leagueMatches.filter(m => m.status === 'COMPLETED');
   const teamCount = standings.length;
 
-  // Static sponsors for demo
-  const sponsors = [
-    { name: 'Calgary Sports Club', tier: 'Title', logo: 'CSC' },
-    { name: 'Prairie Drinks Co.', tier: 'Gold',  logo: 'PDC' },
-    { name: 'Foothills Auto',     tier: 'Silver', logo: 'FA' },
-  ];
-  const tierColor: Record<string, string> = { Title: C.orange, Gold: '#F59E0B', Silver: C.textSub };
+  const sponsors: any[] = league?.sponsors ?? [];
+  const tierColor: Record<string, string> = { TITLE: C.orange, GOLD: '#F59E0B', SILVER: C.textSub, ASSOCIATE: C.textMuted };
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }}>
@@ -299,20 +294,29 @@ export function LeagueDashboardScreen() {
           {/* SPONSORS */}
           {tab === 'sponsors' && (
             <View style={{ gap: S.sm }}>
-              {sponsors.map((sp, i) => (
-                <View key={i} style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.border, padding: S.lg, flexDirection: 'row', alignItems: 'center', gap: S.lg }}>
-                  <View style={{ width: 44, height: 44, borderRadius: R.md, backgroundColor: C.card2, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontFamily: F.bold, fontSize: 12, color: C.textSub }}>{sp.logo}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontFamily: F.bold, fontSize: 14, color: C.text }}>{sp.name}</Text>
-                    <Text style={{ fontFamily: F.reg, fontSize: 12, color: C.textMuted }}>This season</Text>
-                  </View>
-                  <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 20, backgroundColor: `${tierColor[sp.tier] ?? C.textSub}18`, borderWidth: 1, borderColor: `${tierColor[sp.tier] ?? C.textSub}44` }}>
-                    <Text style={{ fontFamily: F.bold, fontSize: 10, color: tierColor[sp.tier] ?? C.textSub }}>{sp.tier}</Text>
-                  </View>
+              {sponsors.length === 0 && (
+                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                  <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted }}>No sponsors yet</Text>
                 </View>
-              ))}
+              )}
+              {sponsors.map((sp: any, i: number) => {
+                const initials = (sp.name as string).split(' ').map((w: string) => w[0]).join('').slice(0, 3).toUpperCase();
+                const color = tierColor[sp.tier] ?? C.textSub;
+                return (
+                  <View key={sp.id ?? i} style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.border, padding: S.lg, flexDirection: 'row', alignItems: 'center', gap: S.lg }}>
+                    <View style={{ width: 44, height: 44, borderRadius: R.md, backgroundColor: C.card2, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontFamily: F.bold, fontSize: 11, color: C.textSub }}>{initials}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontFamily: F.bold, fontSize: 14, color: C.text }}>{sp.name}</Text>
+                      {sp.websiteUrl ? <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted }} numberOfLines={1}>{sp.websiteUrl}</Text> : null}
+                    </View>
+                    <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 20, backgroundColor: `${color}18`, borderWidth: 1, borderColor: `${color}44` }}>
+                      <Text style={{ fontFamily: F.bold, fontSize: 10, color }}>{sp.tier}</Text>
+                    </View>
+                  </View>
+                );
+              })}
               <Pressable style={({ pressed }) => ({ backgroundColor: C.primary, borderRadius: R.lg, paddingVertical: 13, alignItems: 'center', opacity: pressed ? 0.85 : 1, flexDirection: 'row', justifyContent: 'center', gap: S.sm })}>
                 <Text style={{ fontFamily: F.bold, fontSize: 14, color: '#fff' }}>+ Add Sponsor</Text>
               </Pressable>

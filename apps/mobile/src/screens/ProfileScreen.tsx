@@ -55,8 +55,8 @@ export function ProfileScreen() {
     Toast.show({ type: 'success', text1: 'Signed out' });
   }
 
-  const displayName = user?.name ?? 'Arjun Kumar';
-  const displayRole = user?.role ?? 'League Organizer';
+  const displayName = user?.name ?? 'Guest';
+  const displayRole = user?.role ?? 'Viewer';
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }}>
@@ -78,13 +78,13 @@ export function ProfileScreen() {
           </View>
           <Text style={{ fontFamily: F.bold, fontSize: 20, color: C.text, marginBottom: 4 }}>{displayName}</Text>
           <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textSub, marginBottom: S.lg }}>
-            {displayRole} · Calgary
+            {displayRole}
           </Text>
-          <StatRow stats={[
-            { value: '3',   label: 'Leagues' },
-            { value: '247', label: 'Matches' },
-            { value: '14',  label: 'Teams' },
-          ]} />
+          {isAuthenticated && (
+            <StatRow stats={[
+              { value: user?.role ?? '—', label: 'Role' },
+            ]} />
+          )}
         </View>
 
         {/* Sign in buttons for guests */}
@@ -140,7 +140,7 @@ export function ProfileScreen() {
 
         {/* Footer */}
         <View style={{ alignItems: 'center', paddingTop: S.xxl }}>
-          <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.textMuted }}>CricOS · Calgary 2025</Text>
+          <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.textMuted }}>CricOS</Text>
           <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textDim, marginTop: 4 }}>Built for scorers, by cricket fans</Text>
         </View>
       </ScrollView>

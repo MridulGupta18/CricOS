@@ -91,6 +91,11 @@ leaguesRouter.post('/', requireAuth, requireRole('ORGANIZER', 'ADMIN'), validate
 // PATCH /api/v1/leagues/:id
 leaguesRouter.patch('/:id', requireAuth, async (req: AuthRequest, res, next) => {
   try {
+    const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
+    if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
+    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can edit this league' } });
+    }
     const league = await prisma.league.update({
       where: { id: req.params.id },
       data: req.body,
@@ -103,6 +108,11 @@ leaguesRouter.patch('/:id', requireAuth, async (req: AuthRequest, res, next) => 
 // PATCH /api/v1/leagues/:id/status — change league status
 leaguesRouter.patch('/:id/status', requireAuth, async (req: AuthRequest, res, next) => {
   try {
+    const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
+    if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
+    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can change the league status' } });
+    }
     const { status } = req.body;
     const league = await prisma.league.update({
       where: { id: req.params.id },

@@ -132,32 +132,49 @@ matchesRouter.post('/', requireAuth, validate(createMatchSchema), async (req: Au
 // PATCH /api/v1/matches/:id/toss — set toss result
 matchesRouter.patch('/:id/toss', requireAuth, async (req: AuthRequest, res, next) => {
   try {
+    const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
+    if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
+    const uid = req.user!.id;
+    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or assigned scorer can set the toss' } });
+    }
     const { tossWinnerId, tossDecision } = req.body;
-    const match = await prisma.match.update({
+    const updated = await prisma.match.update({
       where: { id: req.params.id },
       data: { tossWinnerId, tossDecision, status: 'IN_PROGRESS' },
       select: matchSelect,
     });
-    res.json({ success: true, data: match });
+    res.json({ success: true, data: updated });
   } catch (err) { next(err); }
 });
 
 // PATCH /api/v1/matches/:id/result — set match result
 matchesRouter.patch('/:id/result', requireAuth, async (req: AuthRequest, res, next) => {
   try {
+    const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
+    if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
+    const uid = req.user!.id;
+    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or assigned scorer can set the result' } });
+    }
     const { winnerId, resultType, winMargin, winMarginType } = req.body;
-    const match = await prisma.match.update({
+    const updated = await prisma.match.update({
       where: { id: req.params.id },
       data: { winnerId, resultType, winMargin, winMarginType, status: 'COMPLETED' },
       select: matchSelect,
     });
-    res.json({ success: true, data: match });
+    res.json({ success: true, data: updated });
   } catch (err) { next(err); }
 });
 
 // DELETE /api/v1/matches/:id
 matchesRouter.delete('/:id', requireAuth, async (req: AuthRequest, res, next) => {
   try {
+    const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true } });
+    if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
+    if (match.creatorId !== req.user!.id && req.user!.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator can delete this match' } });
+    }
     await prisma.match.delete({ where: { id: req.params.id } });
     res.json({ success: true, data: null });
   } catch (err) { next(err); }

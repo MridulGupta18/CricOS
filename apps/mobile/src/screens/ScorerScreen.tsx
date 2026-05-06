@@ -24,6 +24,8 @@ const WICKET_TYPES: { value: WicketType; label: string }[] = [
   { value: 'HIT_WICKET',        label: 'Hit Wkt' },
   { value: 'RETIRED_HURT',      label: 'Retired' },
   { value: 'OBSTRUCTING_FIELD', label: 'Obstruct' },
+  { value: 'HANDLED_BALL',      label: 'Handled' },
+  { value: 'TIMED_OUT',         label: 'Timed Out' },
 ];
 
 // Free hit: these dismissals are NOT allowed
@@ -120,6 +122,9 @@ export function ScorerScreen({ matchId }: Props) {
     wicket?: { type: WicketType; outBatsmanId: string };
   }) => {
     if (isSubmitting || !inningsId || !strikerId || !bowlerId) return;
+
+    // Innings already complete — block further scoring
+    if (innings?.isComplete) return;
 
     // Free hit guard
     if (isFreeHit && params.wicket && FREE_HIT_BLOCKED.includes(params.wicket.type)) {
@@ -228,6 +233,13 @@ export function ScorerScreen({ matchId }: Props) {
           <Text style={{ fontFamily: F.bold, fontSize: 11, color: C.red }}>End</Text>
         </Pressable>
       </View>
+
+      {/* ── Innings complete banner ── */}
+      {innings?.isComplete && (
+        <View style={{ backgroundColor: 'rgba(16,185,129,0.15)', borderBottomWidth: 1, borderBottomColor: 'rgba(16,185,129,0.4)', paddingVertical: 8, alignItems: 'center' }}>
+          <Text style={{ fontFamily: F.bold, fontSize: 13, color: C.green }}>Innings Complete — {totalRuns}/{totalWickets}</Text>
+        </View>
+      )}
 
       {/* ── Free hit banner ── */}
       {isFreeHit && (
@@ -361,6 +373,7 @@ export function ScorerScreen({ matchId }: Props) {
               { label: 'No Ball', type: 'NO_BALL' as ExtraType },
               { label: 'Leg Bye', type: 'LEG_BYE' as ExtraType },
               { label: 'Bye',     type: 'BYE' as ExtraType },
+              { label: 'Penalty', type: 'PENALTY' as ExtraType },
             ].map(ex => (
               <Pressable key={ex.type} onPress={() => submitBall({ runs: 0, extraType: ex.type, extraRuns: 1 })}
                 style={({ pressed }) => ({ flex: 1, minWidth: '40%', paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: pressed ? 'rgba(139,92,246,0.2)' : 'rgba(139,92,246,0.08)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.25)' })}>

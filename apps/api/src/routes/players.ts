@@ -17,6 +17,40 @@ const createPlayerSchema = z.object({
   dateOfBirth: z.string().datetime().optional(),
 });
 
+// GET /api/v1/players — paginated list with optional role/search filters
+playersRouter.get('/', async (req, res, next) => {
+  try {
+    const { q, role, page = '1', limit = '50' } = req.query as Record<string, string>;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const where: Record<string, unknown> = {};
+    if (role && role !== 'All') where.role = role;
+    if (q) where.name = { contains: q, mode: 'insensitive' };
+
+    const [players, total] = await Promise.all([
+      prisma.player.findMany({
+        where,
+        select: {
+          id: true, name: true, role: true, avatarUrl: true, city: true, country: true,
+          jerseyNumber: true, battingStyle: true, bowlingStyle: true,
+          careerStats: { select: { battingRuns: true, battingAverage: true, bowlingWickets: true, bowlingAverage: true } },
+          teamMemberships: {
+            where: { isActive: true },
+            take: 1,
+            include: { team: { select: { id: true, name: true, shortName: true } } },
+          },
+        },
+        orderBy: { name: 'asc' },
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.player.count({ where }),
+    ]);
+
+    res.json({ success: true, data: players, meta: { page: parseInt(page), pageSize: parseInt(limit), total } });
+  } catch (err) { next(err); }
+});
+
 // GET /api/v1/players/:id
 playersRouter.get('/:id', async (req, res, next) => {
   try {

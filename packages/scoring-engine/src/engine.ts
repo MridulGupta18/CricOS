@@ -65,6 +65,11 @@ export function computeInningsState(
     const runsOnBall  = event.runs + totalExtras;
     totalRuns += runsOnBall;
 
+    // ── Initialize striker from first ball (before any wicket/rotation logic) ─
+    if (strikerId === null) {
+      strikerId = event.batsmanId;
+    }
+
     // ── Batsman init ──────────────────────────────────────
     if (!batsmen.has(event.batsmanId)) {
       batsmen.set(event.batsmanId, initBatsman(event.batsmanId));
@@ -128,14 +133,15 @@ export function computeInningsState(
         playerId: event.wicket.outBatsmanId,
       });
 
-      // Strike: if the out batsman was the striker, new batsman takes strike
-      // If non-striker was run out, non-striker changes (strike stays)
-      const outWasStriker = event.wicket.outBatsmanId === strikerId;
-      if (outWasStriker) {
+      // Runs completed before the dismissal still count for strike rotation.
+      // Apply rotation FIRST (odd runs = batsmen crossed), THEN nullify out batsman.
+      if (event.runs % 2 !== 0) {
+        [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
+      }
+      if (event.wicket.outBatsmanId === strikerId) {
         strikerId = null; // new batsman will set this on their first ball
       } else {
-        // non-striker was out (e.g. run out at non-striker end)
-        nonStrikerId = null;
+        nonStrikerId = null; // non-striker was run out (or crossed and dismissed)
       }
 
       // Reset partnership
@@ -171,31 +177,24 @@ export function computeInningsState(
       overRunsFromBat  = 0;
       overHasWideOrNB  = false;
 
-      // End of over: striker and non-striker swap
-      if (!event.wicket) {
-        [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
-      }
+      // End of over: both batsmen cross ends unconditionally.
+      // Wicket block already nullified the dismissed batsman, so swapping here
+      // correctly puts the surviving batsman on strike for the new over.
+      [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
     } else if (isLegal && !event.wicket) {
-      // Mid-over: rotate strike on odd runs
-      const runsForRotation = isBatRun ? event.runs : 0; // byes/legbyes DO rotate
-      const actualRunsForRotation = event.runs; // all runs count for rotation
-      if (actualRunsForRotation % 2 !== 0) {
+      // Mid-over: rotate strike on odd runs (wicket balls handled in wicket block above)
+      if (event.runs % 2 !== 0) {
         [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
       }
     }
 
-    // Set striker from current ball if not yet known
-    if (strikerId === null) {
-      strikerId = event.batsmanId;
-    }
-    if (strikerId === event.batsmanId && nonStrikerId === null) {
-      // non-striker still unknown — will be set when they appear
-    }
+    // (striker init was handled at top of loop; after a wicket, strikerId is null
+    //  and will be set to the new batsman on their first ball)
 
     // ── Partnership accumulation ──────────────────────────
     if (isBatRun) partnershipRuns += event.runs;
-    // byes/legbyes also add to partnership total
-    if (!isBatRun && extraType !== 'WIDE' && extraType !== 'NO_BALL') {
+    // byes/legbyes count towards partnership (running happened)
+    if (extraType === 'BYE' || extraType === 'LEG_BYE') {
       partnershipRuns += totalExtras;
     }
 

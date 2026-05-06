@@ -76,6 +76,7 @@ export const teamsApi = {
 };
 
 export const playersApi = {
+  list:       (params?: Record<string, string>) => apiClient.get('/players', { params }),
   get:        (id: string)        => apiClient.get(`/players/${id}`),
   getStats:   (id: string)        => apiClient.get(`/players/${id}/stats`),
   create:     (data: unknown)     => apiClient.post('/players', data),
