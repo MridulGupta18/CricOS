@@ -106,13 +106,16 @@ authRouter.post('/refresh', async (req, res, next) => {
     const user = await prisma.user.findUnique({ where: { id: payload.id } });
     if (!user) return res.status(401).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
 
-    // Rotate refresh token
-    await prisma.refreshToken.delete({ where: { token: refreshToken } });
-    const newAccessToken = generateAccessToken({ id: user.id, email: user.email, role: user.role });
+    // Rotate refresh token atomically — delete old + create new in one transaction
+    // so a failed create never leaves the user locked out
+    const newAccessToken  = generateAccessToken({ id: user.id, email: user.email, role: user.role });
     const newRefreshToken = generateRefreshToken({ id: user.id });
-    await prisma.refreshToken.create({
-      data: { token: newRefreshToken, userId: user.id, expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
-    });
+    await prisma.$transaction([
+      prisma.refreshToken.delete({ where: { token: refreshToken } }),
+      prisma.refreshToken.create({
+        data: { token: newRefreshToken, userId: user.id, expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+      }),
+    ]);
 
     res.json({ success: true, data: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
   } catch (err) {

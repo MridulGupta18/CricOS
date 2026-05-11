@@ -293,12 +293,20 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
 });
 
 // DELETE /api/v1/scoring/ball/:ballId — undo last ball (soft-delete for audit trail)
-scoringRouter.delete('/ball/:ballId', requireAuth, async (req: AuthRequest, res, next) => {
+scoringRouter.delete('/ball/:ballId', requireAuth, requirePermission('match:score'), async (req: AuthRequest, res, next) => {
   try {
-    const ball = await prisma.ballEvent.findUnique({
+    const ball = await prisma.ballEvent.findFirst({
       where: { id: req.params.ballId, deletedAt: null },
       include: { innings: true, wicket: true },
     });
+    if (ball) {
+      // Only the match creator, assigned scorer, or ADMIN/MASTER can undo
+      const match = await prisma.match.findUnique({ where: { id: ball.matchId }, select: { creatorId: true, scorerId: true } });
+      const uid = req.user!.id;
+      if (match && match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or scorer can undo a ball' } });
+      }
+    }
     if (!ball) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Ball event not found' } });
 
     // Must be the last non-deleted ball of this innings
@@ -343,13 +351,18 @@ scoringRouter.delete('/ball/:ballId', requireAuth, async (req: AuthRequest, res,
 });
 
 // POST /api/v1/scoring/matches/:matchId/super-over — trigger super over after a tie
-scoringRouter.post('/matches/:matchId/super-over', requireAuth, async (req: AuthRequest, res, next) => {
+scoringRouter.post('/matches/:matchId/super-over', requireAuth, requirePermission('match:super_over'), async (req: AuthRequest, res, next) => {
   try {
     const match = await prisma.match.findUnique({
       where: { id: req.params.matchId },
       include: { innings: { orderBy: { inningsNumber: 'asc' } } },
     });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
+    // Only creator, assigned scorer, ADMIN or MASTER can start a super over
+    const uid = req.user!.id;
+    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or scorer can start a super over' } });
+    }
     if (match.status !== 'COMPLETED') return res.status(422).json({ success: false, error: { code: 'NOT_COMPLETE', message: 'Match must be completed (tied) to start a super over' } });
 
     // Verify scores are tied

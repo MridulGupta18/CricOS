@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { View, Text, Pressable, StatusBar, ScrollView, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -6,7 +6,7 @@ import { useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import BottomSheet, { BottomSheetView, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { v4 as uuidv4 } from 'uuid';
-import { scoringApi } from '@/lib/api';
+import { scoringApi, matchesApi } from '@/lib/api';
 import { queueBallEvent } from '@/offline/storage';
 import { useScoringStore } from '@/stores/scoringStore';
 import { connectSocket, joinMatchRoom, leaveMatchRoom } from '@/lib/socket';
@@ -16,6 +16,180 @@ import { isPowerplay } from '@cricket-os/scoring-engine';
 import { C, F, R, S } from '@/lib/theme';
 
 interface Props { matchId: string }
+
+// ── Wicket detail step: select dismissed batsman + fielder ─────────────────
+function WicketDetailsStep({ wicketType, strikerId, nonStrikerId, allPlayers, playerName, needsFielder, onConfirm, onBack }: {
+  wicketType: WicketType;
+  strikerId: string; nonStrikerId: string;
+  allPlayers: any[];
+  playerName: (id: string) => string;
+  needsFielder: boolean;
+  onConfirm: (outBatsmanId: string, fielderId?: string) => void;
+  onBack: () => void;
+}) {
+  const [outId, setOutId]       = useState(strikerId);
+  const [fielderId, setFielderId] = useState<string | null>(null);
+
+  const fieldLabel = wicketType === 'CAUGHT' ? 'Caught by' : wicketType === 'STUMPED' ? 'Stumped by' : 'Run out by';
+
+  return (
+    <View style={{ gap: S.md }}>
+      <Text style={{ fontFamily: F.bold, fontSize: 17, color: C.text, marginTop: S.sm }}>
+        {wicketType.replace('_', ' ')} — details
+      </Text>
+
+      {/* Dismissed batsman */}
+      <View>
+        <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textMuted, marginBottom: S.sm }}>Who was dismissed?</Text>
+        <View style={{ flexDirection: 'row', gap: S.sm }}>
+          {[strikerId, nonStrikerId].filter(Boolean).map(id => (
+            <Pressable key={id} onPress={() => setOutId(id)}
+              style={{ flex: 1, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center',
+                backgroundColor: outId === id ? `${C.red}20` : C.card,
+                borderWidth: 1.5, borderColor: outId === id ? C.red : C.border }}>
+              <Text style={{ fontFamily: F.bold, fontSize: 13, color: outId === id ? C.red : C.textSub }}>
+                {playerName(id)}{id === strikerId ? ' *' : ''}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+
+      {/* Fielder */}
+      {needsFielder && (
+        <View>
+          <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textMuted, marginBottom: S.sm }}>{fieldLabel}</Text>
+          <ScrollView style={{ maxHeight: 140 }} nestedScrollEnabled>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S.sm }}>
+              {allPlayers.map((m: any) => {
+                const pid = m.player?.id;
+                return (
+                  <Pressable key={pid} onPress={() => setFielderId(pid === fielderId ? null : pid)}
+                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20,
+                      backgroundColor: fielderId === pid ? `${C.green}20` : C.card,
+                      borderWidth: 1, borderColor: fielderId === pid ? C.green : C.border }}>
+                    <Text style={{ fontFamily: F.semi, fontSize: 12, color: fielderId === pid ? C.green : C.textSub }}>
+                      {m.player?.name?.split(' ').pop()}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </View>
+      )}
+
+      <View style={{ flexDirection: 'row', gap: S.sm, marginTop: S.sm }}>
+        <Pressable onPress={onBack}
+          style={{ flex: 1, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.border }}>
+          <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.textMuted }}>Back</Text>
+        </Pressable>
+        <Pressable onPress={() => onConfirm(outId, fielderId ?? undefined)}
+          style={({ pressed }) => ({ flex: 2, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: C.red, opacity: pressed ? 0.85 : 1 })}>
+          <Text style={{ fontFamily: F.bold, fontSize: 14, color: '#fff' }}>Confirm Out</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+// ── Match setup: toss + start innings ─────────────────────────────────────
+function MatchSetupScreen({ match, onStarted }: { match: any; onStarted: () => void }) {
+  const [tossWinnerId, setTossWinnerId] = useState<string>(match?.homeTeamId ?? '');
+  const [tossDecision, setTossDecision] = useState<'BAT' | 'BOWL'>('BAT');
+  const [submitting, setSubmitting] = useState(false);
+  const insets = useSafeAreaInsets();
+  const { accessToken } = useAuthStore();
+
+  const homeTeam = match?.homeTeam;
+  const awayTeam = match?.awayTeam;
+
+  // Derive batting/bowling team from toss result
+  const battingTeamId = tossDecision === 'BAT' ? tossWinnerId
+    : tossWinnerId === match?.homeTeamId ? match?.awayTeamId : match?.homeTeamId;
+  const bowlingTeamId = battingTeamId === match?.homeTeamId ? match?.awayTeamId : match?.homeTeamId;
+
+  async function handleStart() {
+    if (!match?.id || submitting) return;
+    setSubmitting(true);
+    try {
+      // 1. Set toss
+      await matchesApi.setToss(match.id, { tossWinnerId, tossDecision });
+      // 2. Start innings 1
+      await scoringApi.startInnings(match.id, { battingTeamId, bowlingTeamId, inningsNumber: 1 });
+      onStarted();
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.error?.message ?? 'Could not start innings. Try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingTop: insets.top + S.xl, paddingBottom: insets.bottom + 80 }}>
+        <Text style={{ fontFamily: F.bold, fontSize: 22, color: C.text, marginBottom: 4 }}>Match Setup</Text>
+        <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted, marginBottom: S.xl }}>
+          {homeTeam?.shortName} vs {awayTeam?.shortName}
+        </Text>
+
+        {/* Toss winner */}
+        <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.textSub, marginBottom: S.sm }}>Who won the toss?</Text>
+        <View style={{ flexDirection: 'row', gap: S.sm, marginBottom: S.xl }}>
+          {[homeTeam, awayTeam].filter(Boolean).map((t: any) => (
+            <Pressable key={t.id} onPress={() => setTossWinnerId(t.id)}
+              style={{ flex: 1, paddingVertical: S.lg, borderRadius: R.lg, alignItems: 'center',
+                backgroundColor: tossWinnerId === t.id ? `${C.primary}22` : C.card,
+                borderWidth: 2, borderColor: tossWinnerId === t.id ? C.primary : C.border }}>
+              <Text style={{ fontFamily: F.bold, fontSize: 18, color: tossWinnerId === t.id ? C.primaryLight : C.textMuted }}>{t.shortName}</Text>
+              <Text style={{ fontFamily: F.reg, fontSize: 11, color: tossWinnerId === t.id ? C.primaryLight : C.textMuted, marginTop: 2 }}>{t.name}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Toss decision */}
+        <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.textSub, marginBottom: S.sm }}>Elected to…</Text>
+        <View style={{ flexDirection: 'row', gap: S.sm, marginBottom: S.xl }}>
+          {(['BAT', 'BOWL'] as const).map(d => (
+            <Pressable key={d} onPress={() => setTossDecision(d)}
+              style={{ flex: 1, paddingVertical: S.lg, borderRadius: R.lg, alignItems: 'center',
+                backgroundColor: tossDecision === d ? `${C.green}22` : C.card,
+                borderWidth: 2, borderColor: tossDecision === d ? C.green : C.border }}>
+              <Text style={{ fontFamily: F.bold, fontSize: 22 }}>{d === 'BAT' ? '🏏' : '⚾'}</Text>
+              <Text style={{ fontFamily: F.bold, fontSize: 15, color: tossDecision === d ? C.green : C.textMuted, marginTop: 4 }}>{d}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Summary */}
+        <View style={{ backgroundColor: C.card, borderRadius: R.lg, padding: S.lg, borderWidth: 1, borderColor: C.border, marginBottom: S.xl }}>
+          <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textSub }}>
+            <Text style={{ fontFamily: F.bold, color: C.text }}>
+              {tossWinnerId === match?.homeTeamId ? homeTeam?.shortName : awayTeam?.shortName}
+            </Text>
+            {' '}won the toss and elected to{' '}
+            <Text style={{ fontFamily: F.bold, color: C.green }}>{tossDecision.toLowerCase()}</Text>
+          </Text>
+          <Text style={{ fontFamily: F.reg, fontSize: 12, color: C.textMuted, marginTop: 6 }}>
+            Innings 1: <Text style={{ fontFamily: F.semi, color: C.text }}>
+              {battingTeamId === match?.homeTeamId ? homeTeam?.shortName : awayTeam?.shortName}
+            </Text> bat vs <Text style={{ fontFamily: F.semi, color: C.text }}>
+              {bowlingTeamId === match?.homeTeamId ? homeTeam?.shortName : awayTeam?.shortName}
+            </Text> bowl
+          </Text>
+        </View>
+
+        <Pressable onPress={handleStart} disabled={submitting}
+          style={({ pressed }) => ({ backgroundColor: submitting ? C.border : C.primary, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', opacity: pressed ? 0.85 : 1 })}>
+          <Text style={{ fontFamily: F.bold, fontSize: 16, color: '#fff' }}>
+            {submitting ? 'Starting…' : 'Start Match'}
+          </Text>
+        </Pressable>
+      </ScrollView>
+    </View>
+  );
+}
 
 const WICKET_TYPES: { value: WicketType; label: string }[] = [
   { value: 'BOWLED',            label: 'Bowled' },
@@ -100,9 +274,14 @@ export function ScorerScreen({ matchId }: Props) {
 
   const { isOnline, lastBallId, setLastBallId, addPendingBall, pendingBalls } = useScoringStore();
   const [showExtras, setShowExtras]   = useState(false);
+  const [extraRunsAmount, setExtraRunsAmount] = useState(1);
+  const [pendingExtra, setPendingExtra] = useState<ExtraType | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [ballHistory, setBallHistory]   = useState<string[]>([]);
   const [pickerMode, setPickerMode]     = useState<PickerMode>(null);
+  // Wicket two-step: first select type, then select dismissed batsman + fielder
+  const [pendingWicketType, setPendingWicketType] = useState<WicketType | null>(null);
+  const [wicketPickerStep, setWicketPickerStep]   = useState<'type' | 'details'>('type');
 
   // Manual overrides — cleared when scorecard refetches with updated state
   const [manualStrikerId,    setManualStrikerId]    = useState<string | null>(null);
@@ -169,7 +348,7 @@ export function ScorerScreen({ matchId }: Props) {
 
   const submitBall = useCallback(async (params: {
     runs: number; extraType?: ExtraType; extraRuns?: number;
-    wicket?: { type: WicketType; outBatsmanId: string };
+    wicket?: { type: WicketType; outBatsmanId: string; fielderId?: string };
   }) => {
     if (isSubmitting || !inningsId || !strikerId || !bowlerId) return;
 
@@ -253,10 +432,26 @@ export function ScorerScreen({ matchId }: Props) {
     pickerSheetRef.current?.close();
   }
 
+  // Wicket types that require a fielder name
+  const FIELDER_REQUIRED: WicketType[] = ['CAUGHT', 'STUMPED', 'RUN_OUT'];
+  // All players for wicket detail step
+  const allMatchPlayers = useMemo(() => [...battingMembers, ...bowlingMembers], [battingMembers, bowlingMembers]);
+
   const pickerList = pickerMode === 'bowler' ? bowlingMembers : battingMembers;
   const bowlerInfo = bowlerStat();
   const strikerInfo    = batsmanStat(strikerId);
   const nonStrikerInfo = batsmanStat(nonStrikerId);
+
+  // Show match setup (toss + start innings) when no innings have been created yet
+  const matchNotStarted = match && (!match.innings || match.innings.length === 0);
+  if (matchNotStarted) {
+    return (
+      <MatchSetupScreen
+        match={match}
+        onStarted={() => queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] })}
+      />
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -426,17 +621,17 @@ export function ScorerScreen({ matchId }: Props) {
           })}
         </View>
 
-        {/* Extras panel */}
-        {showExtras && (
+        {/* Extras panel — step 1: pick type */}
+        {showExtras && !pendingExtra && (
           <View style={{ backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(139,92,246,0.3)', borderRadius: R.lg, padding: S.md, flexDirection: 'row', flexWrap: 'wrap', gap: S.sm }}>
-            {[
+            {([
               { label: 'Wide',    type: 'WIDE' as ExtraType },
               { label: 'No Ball', type: 'NO_BALL' as ExtraType },
               { label: 'Leg Bye', type: 'LEG_BYE' as ExtraType },
               { label: 'Bye',     type: 'BYE' as ExtraType },
               { label: 'Penalty', type: 'PENALTY' as ExtraType },
-            ].map(ex => (
-              <Pressable key={ex.type} onPress={() => submitBall({ runs: 0, extraType: ex.type, extraRuns: 1 })}
+            ] as const).map(ex => (
+              <Pressable key={ex.type} onPress={() => { setPendingExtra(ex.type); setExtraRunsAmount(ex.type === 'PENALTY' ? 5 : 1); }}
                 style={({ pressed }) => ({ flex: 1, minWidth: '40%', paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: pressed ? 'rgba(139,92,246,0.2)' : 'rgba(139,92,246,0.08)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.25)' })}>
                 <Text style={{ fontFamily: F.bold, fontSize: 13, color: C.purple }}>{ex.label}</Text>
               </Pressable>
@@ -444,6 +639,40 @@ export function ScorerScreen({ matchId }: Props) {
             <Pressable onPress={() => setShowExtras(false)} style={{ width: '100%', alignItems: 'center', paddingVertical: 6 }}>
               <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textMuted }}>Cancel</Text>
             </Pressable>
+          </View>
+        )}
+
+        {/* Extras panel — step 2: pick run amount */}
+        {showExtras && pendingExtra && (
+          <View style={{ backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(139,92,246,0.3)', borderRadius: R.lg, padding: S.md, gap: S.sm }}>
+            <Text style={{ fontFamily: F.bold, fontSize: 14, color: C.text }}>
+              {pendingExtra.replace('_', ' ')} — how many runs?
+            </Text>
+            <View style={{ flexDirection: 'row', gap: S.sm }}>
+              {(pendingExtra === 'PENALTY' ? [5] : [0, 1, 2, 3, 4]).map(r => (
+                <Pressable key={r} onPress={() => setExtraRunsAmount(r)}
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: R.md, alignItems: 'center',
+                    backgroundColor: extraRunsAmount === r ? C.primary : 'rgba(255,255,255,0.05)',
+                    borderWidth: 1.5, borderColor: extraRunsAmount === r ? C.primary : C.border }}>
+                  <Text style={{ fontFamily: F.bold, fontSize: 16, color: extraRunsAmount === r ? '#fff' : C.textSub }}>{r}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', gap: S.sm, marginTop: S.xs }}>
+              <Pressable onPress={() => setPendingExtra(null)}
+                style={{ flex: 1, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: C.card2, borderWidth: 1, borderColor: C.border }}>
+                <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.textMuted }}>Back</Text>
+              </Pressable>
+              <Pressable onPress={() => {
+                  submitBall({ runs: 0, extraType: pendingExtra, extraRuns: extraRunsAmount });
+                  setPendingExtra(null); setShowExtras(false);
+                }}
+                style={({ pressed }) => ({ flex: 2, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: C.primary, opacity: pressed ? 0.85 : 1 })}>
+                <Text style={{ fontFamily: F.bold, fontSize: 14, color: '#fff' }}>
+                  Confirm {pendingExtra.replace('_', ' ')} +{extraRunsAmount}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -467,41 +696,62 @@ export function ScorerScreen({ matchId }: Props) {
         )}
       </View>
 
-      {/* ── Wicket sheet ── */}
-      <BottomSheet ref={wicketSheetRef} index={-1} snapPoints={['55%']} enablePanDownToClose
-        backgroundStyle={{ backgroundColor: '#121826' }} handleIndicatorStyle={{ backgroundColor: C.border }}>
+      {/* ── Wicket sheet — Step 1: pick type ── */}
+      <BottomSheet ref={wicketSheetRef} index={-1} snapPoints={['60%']} enablePanDownToClose
+        backgroundStyle={{ backgroundColor: '#121826' }} handleIndicatorStyle={{ backgroundColor: C.border }}
+        onClose={() => { setPendingWicketType(null); setWicketPickerStep('type'); }}>
         <BottomSheetView style={{ paddingHorizontal: S.xl, paddingBottom: insets.bottom + S.xl }}>
-          <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.text, marginBottom: S.lg, marginTop: S.sm }}>How was the wicket?</Text>
-          {isFreeHit && (
-            <View style={{ backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: R.md, padding: S.sm, marginBottom: S.md, borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)' }}>
-              <Text style={{ fontFamily: F.semi, fontSize: 11, color: C.orange }}>⚡ Free Hit — only Run Out & Obstructing apply</Text>
-            </View>
+          {wicketPickerStep === 'type' ? (
+            <>
+              <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.text, marginBottom: S.lg, marginTop: S.sm }}>How was the wicket?</Text>
+              {isFreeHit && (
+                <View style={{ backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: R.md, padding: S.sm, marginBottom: S.md, borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)' }}>
+                  <Text style={{ fontFamily: F.semi, fontSize: 11, color: C.orange }}>⚡ Free Hit — only Run Out & Obstructing apply</Text>
+                </View>
+              )}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S.sm }}>
+                {WICKET_TYPES.map(w => {
+                  const blocked = isFreeHit && FREE_HIT_BLOCKED.includes(w.value);
+                  return (
+                    <Pressable key={w.value} disabled={blocked}
+                      onPress={async () => {
+                        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        setPendingWicketType(w.value);
+                        setWicketPickerStep('details');
+                      }}
+                      style={({ pressed }) => ({
+                        width: '22%', flex: 1, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center',
+                        backgroundColor: blocked ? 'rgba(255,255,255,0.03)' : `${C.red}15`,
+                        borderWidth: 1.5, borderColor: blocked ? C.border : `${C.red}40`,
+                        opacity: blocked ? 0.35 : pressed ? 0.75 : 1,
+                      })}>
+                      <Text style={{ fontFamily: F.semi, fontSize: 12, color: blocked ? C.textMuted : C.red }}>{w.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Pressable onPress={() => wicketSheetRef.current?.close()}
+                style={{ marginTop: S.md, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.border }}>
+                <Text style={{ fontFamily: F.semi, fontSize: 14, color: C.textSub }}>Cancel</Text>
+              </Pressable>
+            </>
+          ) : (
+            <WicketDetailsStep
+              wicketType={pendingWicketType!}
+              strikerId={strikerId}
+              nonStrikerId={nonStrikerId}
+              allPlayers={allMatchPlayers}
+              playerName={playerName}
+              needsFielder={FIELDER_REQUIRED.includes(pendingWicketType!)}
+              onConfirm={(outBatsmanId, fielderId) => {
+                wicketSheetRef.current?.close();
+                setPendingWicketType(null);
+                setWicketPickerStep('type');
+                submitBall({ runs: 0, wicket: { type: pendingWicketType!, outBatsmanId, fielderId } });
+              }}
+              onBack={() => setWicketPickerStep('type')}
+            />
           )}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S.sm }}>
-            {WICKET_TYPES.map(w => {
-              const blocked = isFreeHit && FREE_HIT_BLOCKED.includes(w.value);
-              return (
-                <Pressable key={w.value} disabled={blocked}
-                  onPress={async () => {
-                    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                    wicketSheetRef.current?.close();
-                    submitBall({ runs: 0, wicket: { type: w.value, outBatsmanId: strikerId } });
-                  }}
-                  style={({ pressed }) => ({
-                    width: '22%', flex: 1, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center',
-                    backgroundColor: blocked ? 'rgba(255,255,255,0.03)' : `${C.red}15`,
-                    borderWidth: 1.5, borderColor: blocked ? C.border : `${C.red}40`,
-                    opacity: blocked ? 0.35 : pressed ? 0.75 : 1,
-                  })}>
-                  <Text style={{ fontFamily: F.semi, fontSize: 12, color: blocked ? C.textMuted : C.red }}>{w.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Pressable onPress={() => wicketSheetRef.current?.close()}
-            style={{ marginTop: S.md, paddingVertical: S.md, borderRadius: R.lg, alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.border }}>
-            <Text style={{ fontFamily: F.semi, fontSize: 14, color: C.textSub }}>Cancel</Text>
-          </Pressable>
         </BottomSheetView>
       </BottomSheet>
 

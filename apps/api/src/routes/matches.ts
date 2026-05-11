@@ -150,7 +150,7 @@ matchesRouter.patch('/:id/toss', requireAuth, validate(tossSchema), async (req: 
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
     const uid = req.user!.id;
-    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN') {
+    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or assigned scorer can set the toss' } });
     }
     const { tossWinnerId, tossDecision } = req.body;
@@ -169,7 +169,7 @@ matchesRouter.patch('/:id/result', requireAuth, validate(resultSchema), async (r
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
     const uid = req.user!.id;
-    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN') {
+    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or assigned scorer can set the result' } });
     }
     const { winnerId, resultType, winMargin, winMarginType } = req.body;
@@ -187,7 +187,7 @@ matchesRouter.delete('/:id', requireAuth, async (req: AuthRequest, res, next) =>
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
-    if (match.creatorId !== req.user!.id && req.user!.role !== 'ADMIN') {
+    if (match.creatorId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator can delete this match' } });
     }
     await prisma.match.delete({ where: { id: req.params.id } });

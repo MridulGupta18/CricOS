@@ -142,17 +142,21 @@ export function computeInningsState(
         });
       }
 
+      // Snapshot both IDs BEFORE any rotation or nullification so the archived
+      // partnership correctly records the two batsmen who built it.
+      const partnerBat1 = strikerId    ?? '';
+      const partnerBat2 = nonStrikerId ?? '';
+
       // Runs before dismissal count for rotation (apply BEFORE removing batsman).
       if (event.runs % 2 !== 0) {
         [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
       }
 
-      // Archive partnership NOW — while both batsmanIds are still valid —
-      // before we nullify the outgoing batsman's position below.
+      // Archive using the pre-rotation snapshot.
       if (partnershipRuns > 0 || partnershipBalls > 0) {
         partnershipHistory.push({
-          batsmanId1: strikerId    ?? '',
-          batsmanId2: nonStrikerId ?? '',
+          batsmanId1: partnerBat1,
+          batsmanId2: partnerBat2,
           runs:  partnershipRuns,
           balls: partnershipBalls,
         });

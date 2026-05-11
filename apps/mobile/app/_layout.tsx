@@ -99,6 +99,7 @@ export default function RootLayout() {
             <Stack.Screen name="league/[slug]" options={{ presentation: 'card' }} />
             <Stack.Screen name="league/create" options={{ presentation: 'modal' }} />
             <Stack.Screen name="team/create" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="team/[id]" options={{ presentation: 'card' }} />
             <Stack.Screen name="players/create" options={{ presentation: 'modal' }} />
             <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
             <Stack.Screen name="auth/register" options={{ presentation: 'modal' }} />

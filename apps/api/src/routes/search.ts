@@ -45,7 +45,7 @@ searchRouter.get('/', async (req, res, next) => {
           title: p.name,
           subtitle: [p.role, p.city].filter(Boolean).join(' · '),
           avatarUrl: p.avatarUrl ?? undefined,
-          href: `/players/${p.id}`,
+          href: `/player/${p.id}`,
         })
       );
     }
@@ -71,7 +71,7 @@ searchRouter.get('/', async (req, res, next) => {
           title: t.name,
           subtitle: [t.shortName, t.city].filter(Boolean).join(' · '),
           avatarUrl: t.logoUrl ?? undefined,
-          href: `/teams/${t.id}`,
+          href: `/team/${t.id}`,
         })
       );
     }
@@ -103,7 +103,7 @@ searchRouter.get('/', async (req, res, next) => {
           type: 'MATCH',
           title: m.title ?? `${m.homeTeam.shortName} vs ${m.awayTeam.shortName}`,
           subtitle: [m.status, m.city, m.scheduledAt ? new Date(m.scheduledAt).toLocaleDateString() : null].filter(Boolean).join(' · '),
-          href: `/matches/${m.id}`,
+          href: `/match/${m.id}`,
         })
       );
     }
@@ -129,7 +129,7 @@ searchRouter.get('/', async (req, res, next) => {
           title: l.name,
           subtitle: [l.status, l.city].filter(Boolean).join(' · '),
           avatarUrl: l.logoUrl ?? undefined,
-          href: `/leagues/${l.slug}`,
+          href: `/league/${l.slug}`,
         })
       );
     }

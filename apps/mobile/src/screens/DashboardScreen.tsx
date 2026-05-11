@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { matchesApi, leaguesApi } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { C, F, R, S } from '@/lib/theme';
 
 const GRAD_BG = '#141929';
@@ -131,6 +132,11 @@ export function DashboardScreen() {
   const upcoming = all.filter(m => m.status === 'UPCOMING').slice(0, 4);
   const leagues: any[] = ld?.data?.data ?? [];
 
+  const authUser = useAuthStore((s) => s.user);
+  const userInitials = authUser?.name
+    ? authUser.name.split(' ').map((w: string) => w[0].toUpperCase()).slice(0, 2).join('')
+    : '?';
+
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
@@ -146,9 +152,6 @@ export function DashboardScreen() {
     }
   }, [live.length]);
 
-  useEffect(() => {
-    import('@/lib/api').then(({ default: _ }) => {}).catch(() => {});
-  }, []);
 
   const onRefresh = useCallback(() => { rm(); rl(); }, [rm, rl]);
 
@@ -172,7 +175,7 @@ export function DashboardScreen() {
           </View>
           <Pressable onPress={() => router.push('/(tabs)/profile')}
             style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(99,102,241,0.3)' }}>
-            <Text style={{ fontFamily: F.bold, fontSize: 13, color: '#fff' }}>AK</Text>
+            <Text style={{ fontFamily: F.bold, fontSize: 13, color: '#fff' }}>{userInitials}</Text>
           </Pressable>
         </View>
         {/* Search bar — matches design */}

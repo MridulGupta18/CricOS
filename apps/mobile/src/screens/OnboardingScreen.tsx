@@ -41,7 +41,7 @@ export function OnboardingScreen() {
       listRef.current?.scrollToIndex({ index: active + 1, animated: true });
       setActive(active + 1);
     } else {
-      router.replace('/auth/login');
+      router.replace('/auth/register');
     }
   }
 

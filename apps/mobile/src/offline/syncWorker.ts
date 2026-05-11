@@ -34,10 +34,11 @@ export async function syncPendingBalls() {
         await removePendingBall(ball.clientId);
         useScoringStore.getState().removePendingBall(ball.clientId);
       } catch (err: any) {
-        // Permanently failed — remove from queue
+        // Permanently failed — remove from both storage and store
         const status = err?.response?.status;
         if (status === 409 || status === 422) {
-          removePendingBall(ball.clientId);
+          await removePendingBall(ball.clientId);
+          useScoringStore.getState().removePendingBall(ball.clientId);
         }
         // Network error — leave in queue, retry next sync
       }

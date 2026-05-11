@@ -15,6 +15,8 @@ if (!JWT_SECRET) {
   console.warn('[CricOS] WARNING: JWT_SECRET not set — using insecure dev secret. Set JWT_SECRET in production!');
 }
 const _JWT_SECRET = JWT_SECRET ?? 'dev-secret-DO-NOT-USE-IN-PRODUCTION-' + Math.random();
+// Exported so socket handlers use the exact same secret — never diverge
+export { _JWT_SECRET as JWT_SECRET_INTERNAL };
 
 // ─── TOKEN VERIFICATION ──────────────────────────────────────
 

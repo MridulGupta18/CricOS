@@ -91,7 +91,7 @@ leaguesRouter.post('/', requireAuth, requirePermission('league:create'), validat
 });
 
 // PATCH /api/v1/leagues/:id
-leaguesRouter.patch('/:id', requireAuth, validate(updateLeagueSchema), async (req: AuthRequest, res, next) => {
+leaguesRouter.patch('/:id', requireAuth, requirePermission('league:update'), validate(updateLeagueSchema), async (req: AuthRequest, res, next) => {
   try {
     const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
@@ -108,7 +108,7 @@ leaguesRouter.patch('/:id', requireAuth, validate(updateLeagueSchema), async (re
 });
 
 // PATCH /api/v1/leagues/:id/status — change league status
-leaguesRouter.patch('/:id/status', requireAuth, async (req: AuthRequest, res, next) => {
+leaguesRouter.patch('/:id/status', requireAuth, requirePermission('league:set_status'), async (req: AuthRequest, res, next) => {
   try {
     const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
