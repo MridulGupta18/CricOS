@@ -1,14 +1,16 @@
-import { useState, useCallback, useRef } from 'react';
-import { View, Text, Pressable, StatusBar, ScrollView, FlatList } from 'react-native';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { View, Text, Pressable, StatusBar, ScrollView, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import BottomSheet, { BottomSheetView, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { v4 as uuidv4 } from 'uuid';
 import { scoringApi } from '@/lib/api';
 import { queueBallEvent } from '@/offline/storage';
 import { useScoringStore } from '@/stores/scoringStore';
+import { connectSocket, joinMatchRoom, leaveMatchRoom } from '@/lib/socket';
+import { useAuthStore } from '@/stores/authStore';
 import { ExtraType, WicketType, BallEvent, InningsState } from '@cricket-os/shared';
 import { isPowerplay } from '@cricket-os/scoring-engine';
 import { C, F, R, S } from '@/lib/theme';
@@ -45,8 +47,24 @@ type PickerMode = 'striker' | 'nonStriker' | 'bowler' | null;
 export function ScorerScreen({ matchId }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
+  const { accessToken } = useAuthStore();
   const wicketSheetRef  = useRef<BottomSheet>(null);
   const pickerSheetRef  = useRef<BottomSheet>(null);
+
+  // Join the match Socket.IO room for live updates
+  useEffect(() => {
+    const socket = connectSocket(accessToken ?? undefined);
+    joinMatchRoom(matchId);
+    const onBallScored = () => queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] });
+    socket.on('ball:scored', onBallScored);
+    socket.on('innings:complete', onBallScored);
+    return () => {
+      socket.off('ball:scored', onBallScored);
+      socket.off('innings:complete', onBallScored);
+      leaveMatchRoom(matchId);
+    };
+  }, [matchId, accessToken]);
 
   const { isOnline, lastBallId, setLastBallId, addPendingBall, pendingBalls } = useScoringStore();
   const [showExtras, setShowExtras]   = useState(false);
@@ -229,7 +247,18 @@ export function ScorerScreen({ matchId }: Props) {
           {pendingBalls.length > 0 && <Text style={{ fontFamily: F.semi, fontSize: 11, color: C.orange }}>{pendingBalls.length} pending</Text>}
           <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: isOnline ? C.green : C.red }} />
         </View>
-        <Pressable style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)', borderRadius: R.md, paddingHorizontal: 10, paddingVertical: 5 }}>
+        <Pressable
+          onPress={() =>
+            Alert.alert(
+              'End Innings',
+              `End this innings at ${totalRuns}/${totalWickets} (${overNum}.${legalBalls} ov)?`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'End Innings', style: 'destructive', onPress: () => router.back() },
+              ]
+            )
+          }
+          style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)', borderRadius: R.md, paddingHorizontal: 10, paddingVertical: 5 }}>
           <Text style={{ fontFamily: F.bold, fontSize: 11, color: C.red }}>End</Text>
         </Pressable>
       </View>

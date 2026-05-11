@@ -22,6 +22,25 @@ scoringRouter.post('/matches/:matchId/innings', requireAuth, async (req: AuthReq
       return res.status(409).json({ success: false, error: { code: 'INNINGS_EXISTS', message: 'Innings already started' } });
     }
 
+    // Validate batting order matches toss decision (innings 1 only)
+    if (inningsNumber === 1) {
+      const match = await prisma.match.findUnique({
+        where: { id: req.params.matchId },
+        select: { tossWinnerId: true, tossDecision: true, homeTeamId: true, awayTeamId: true },
+      });
+      if (match?.tossWinnerId && match.tossDecision) {
+        const expectedBattingTeam = match.tossDecision === 'BAT'
+          ? match.tossWinnerId
+          : (match.homeTeamId === match.tossWinnerId ? match.awayTeamId : match.homeTeamId);
+        if (battingTeamId !== expectedBattingTeam) {
+          return res.status(422).json({
+            success: false,
+            error: { code: 'TOSS_ORDER_MISMATCH', message: 'Batting team does not match toss decision' },
+          });
+        }
+      }
+    }
+
     const innings = await prisma.innings.create({
       data: { matchId: req.params.matchId, battingTeamId, bowlingTeamId, inningsNumber },
     });
@@ -65,7 +84,7 @@ scoringRouter.post('/ball', requireAuth, validate(ballEventSchema), async (req: 
 
     const innings = await prisma.innings.findUnique({
       where: { id: inningsId },
-      include: { ballEvents: { orderBy: { rawBallNumber: 'asc' }, include: { wicket: true } } },
+      include: { ballEvents: { where: { deletedAt: null }, orderBy: { rawBallNumber: 'asc' }, include: { wicket: true } } },
     });
     if (!innings) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Innings not found' } });
     if (innings.isCompleted) return res.status(422).json({ success: false, error: { code: 'INNINGS_COMPLETE', message: 'Innings is already complete' } });
@@ -207,32 +226,38 @@ scoringRouter.post('/ball', requireAuth, validate(ballEventSchema), async (req: 
       inningsComplete: inningsNowComplete,
     });
 
+    // Recompute career stats for involved players after match finishes (fire-and-forget)
+    if (inningsNowComplete && innings.inningsNumber >= 2) {
+      recomputeCareerStatsForMatch(innings.matchId).catch(() => {});
+    }
+
     res.status(201).json({ success: true, data: { ballEvent, isFreeHit, inningsComplete: inningsNowComplete } });
   } catch (err) { next(err); }
 });
 
-// DELETE /api/v1/scoring/ball/:ballId — undo last ball
+// DELETE /api/v1/scoring/ball/:ballId — undo last ball (soft-delete for audit trail)
 scoringRouter.delete('/ball/:ballId', requireAuth, async (req: AuthRequest, res, next) => {
   try {
     const ball = await prisma.ballEvent.findUnique({
-      where: { id: req.params.ballId },
+      where: { id: req.params.ballId, deletedAt: null },
       include: { innings: true, wicket: true },
     });
     if (!ball) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Ball event not found' } });
 
+    // Must be the last non-deleted ball of this innings
     const lastBall = await prisma.ballEvent.findFirst({
-      where: { inningsId: ball.inningsId },
+      where: { inningsId: ball.inningsId, deletedAt: null },
       orderBy: { rawBallNumber: 'desc' },
     });
     if (lastBall?.id !== ball.id) {
       return res.status(400).json({ success: false, error: { code: 'NOT_LAST_BALL', message: 'Can only undo the last ball' } });
     }
 
-    // Re-open innings if it was marked complete
     const wasComplete = ball.innings.isCompleted;
 
     await prisma.$transaction(async (tx) => {
-      await tx.ballEvent.delete({ where: { id: ball.id } });
+      // Soft-delete: preserve the record for audit, just mark deleted
+      await tx.ballEvent.update({ where: { id: ball.id }, data: { deletedAt: new Date() } });
 
       await tx.innings.update({
         where: { id: ball.inningsId },
@@ -305,6 +330,7 @@ scoringRouter.get('/innings/:inningsId', async (req, res, next) => {
       where: { id: req.params.inningsId },
       include: {
         ballEvents: {
+          where: { deletedAt: null },
           orderBy: { rawBallNumber: 'asc' },
           include: { wicket: true },
         },
@@ -359,6 +385,7 @@ scoringRouter.get('/matches/:matchId/scorecard', async (req, res, next) => {
         innings: {
           include: {
             ballEvents: {
+              where: { deletedAt: null },
               orderBy: { rawBallNumber: 'asc' },
               include: { wicket: true },
             },
@@ -382,3 +409,140 @@ scoringRouter.get('/matches/:matchId/scorecard', async (req, res, next) => {
     res.json({ success: true, data: { match, inningsStates } });
   } catch (err) { next(err); }
 });
+
+// ─── CAREER STATS RECOMPUTE ──────────────────────────────────
+// Called after a match's final innings completes.
+// Recomputes PlayerCareerStats for every player who batted or bowled.
+
+async function recomputeCareerStatsForMatch(matchId: string): Promise<void> {
+  const BOWLER_CREDITED = ['BOWLED', 'CAUGHT', 'LBW', 'STUMPED', 'HIT_WICKET'];
+
+  // Collect all unique player IDs involved in this match
+  const balls = await prisma.ballEvent.findMany({
+    where: { matchId },
+    include: { wicket: true },
+  });
+  const playerIds = new Set<string>();
+  for (const b of balls) {
+    playerIds.add(b.batsmanId);
+    playerIds.add(b.bowlerId);
+    if (b.wicket?.fielderId) playerIds.add(b.wicket.fielderId);
+    if (b.wicket?.outBatsmanId) playerIds.add(b.wicket.outBatsmanId);
+  }
+
+  for (const playerId of playerIds) {
+    try {
+      // ── Batting ────────────────────────────────────────────
+      const battingBalls = await prisma.ballEvent.findMany({
+        where: { batsmanId: playerId },
+        include: { wicket: true, innings: { select: { matchId: true } } },
+      });
+
+      const batByInnings: Record<string, { runs: number; balls: number; fours: number; sixes: number; isOut: boolean; matchId: string }> = {};
+      for (const b of battingBalls) {
+        const key = b.inningsId;
+        if (!batByInnings[key]) batByInnings[key] = { runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false, matchId: b.innings.matchId };
+        if (b.extraType !== 'WIDE') batByInnings[key].balls++;
+        if (!b.extraType || (b.extraType !== 'BYE' && b.extraType !== 'LEG_BYE' && b.extraType !== 'WIDE')) {
+          batByInnings[key].runs += b.runs;
+          if (b.runs === 4 && b.isBoundary) batByInnings[key].fours++;
+          if (b.runs === 6 && b.isSix) batByInnings[key].sixes++;
+        }
+        if (b.wicket && b.wicket.outBatsmanId === playerId) batByInnings[key].isOut = true;
+      }
+
+      const batInningsList = Object.values(batByInnings);
+      const battingMatches = new Set(batInningsList.map(i => i.matchId)).size;
+      const battingInnings = batInningsList.length;
+      const battingRuns    = batInningsList.reduce((s, i) => s + i.runs, 0);
+      const battingBalls2  = batInningsList.reduce((s, i) => s + i.balls, 0);
+      const battingFours   = batInningsList.reduce((s, i) => s + i.fours, 0);
+      const battingSixes   = batInningsList.reduce((s, i) => s + i.sixes, 0);
+      const battingNotOuts = batInningsList.filter(i => !i.isOut).length;
+      const dismissals     = battingInnings - battingNotOuts;
+      const battingHighScore = Math.max(0, ...batInningsList.map(i => i.runs));
+      const battingHalfCenturies = batInningsList.filter(i => i.runs >= 50 && i.runs < 100).length;
+      const battingCenturies     = batInningsList.filter(i => i.runs >= 100).length;
+      const battingAverage   = dismissals > 0 ? battingRuns / dismissals : battingRuns;
+      const battingStrikeRate = battingBalls2 > 0 ? (battingRuns / battingBalls2) * 100 : 0;
+
+      // ── Bowling ────────────────────────────────────────────
+      const bowlingBalls = await prisma.ballEvent.findMany({
+        where: { bowlerId: playerId },
+        include: { wicket: true, innings: { select: { matchId: true } } },
+      });
+
+      const bowlByInnings: Record<string, { balls: number; runs: number; wickets: number; matchId: string; overMap: Record<number, { runs: number; legal: number; hasExtra: boolean }> }> = {};
+      for (const b of bowlingBalls) {
+        const key = b.inningsId;
+        if (!bowlByInnings[key]) bowlByInnings[key] = { balls: 0, runs: 0, wickets: 0, matchId: b.innings.matchId, overMap: {} };
+        if (b.isLegalBall) bowlByInnings[key].balls++;
+        if (b.extraType !== 'BYE' && b.extraType !== 'LEG_BYE') {
+          bowlByInnings[key].runs += b.runs + b.extraRuns;
+        }
+        if (b.wicket && BOWLER_CREDITED.includes(b.wicket.wicketType)) bowlByInnings[key].wickets++;
+        const ov = b.overNumber;
+        if (!bowlByInnings[key].overMap[ov]) bowlByInnings[key].overMap[ov] = { runs: 0, legal: 0, hasExtra: false };
+        if (b.isLegalBall) bowlByInnings[key].overMap[ov].legal++;
+        if (b.extraType !== 'BYE' && b.extraType !== 'LEG_BYE') bowlByInnings[key].overMap[ov].runs += b.runs + b.extraRuns;
+        if (b.extraType === 'WIDE' || b.extraType === 'NO_BALL') bowlByInnings[key].overMap[ov].hasExtra = true;
+      }
+
+      const bowlInningsList = Object.values(bowlByInnings);
+      const bowlingMatches  = new Set(bowlInningsList.map(i => i.matchId)).size;
+      const bowlingBalls2   = bowlInningsList.reduce((s, i) => s + i.balls, 0);
+      const bowlingRuns2    = bowlInningsList.reduce((s, i) => s + i.runs, 0);
+      const bowlingWickets  = bowlInningsList.reduce((s, i) => s + i.wickets, 0);
+      let bowlingMaidens = 0;
+      let fiveWicketHauls = 0;
+      let bowlBestWkts = 0; let bowlBestRuns = 9999;
+      for (const inn of bowlInningsList) {
+        for (const ov of Object.values(inn.overMap)) {
+          if (ov.legal >= 6 && ov.runs === 0 && !ov.hasExtra) bowlingMaidens++;
+        }
+        if (inn.wickets >= 5) fiveWicketHauls++;
+        if (inn.wickets > bowlBestWkts || (inn.wickets === bowlBestWkts && inn.runs < bowlBestRuns)) {
+          bowlBestWkts = inn.wickets; bowlBestRuns = inn.runs;
+        }
+      }
+      const bowlingOvers = bowlingBalls2 / 6;
+      const bowlingAverage   = bowlingWickets > 0 ? bowlingRuns2 / bowlingWickets : 0;
+      const bowlingEconomy   = bowlingOvers > 0 ? bowlingRuns2 / bowlingOvers : 0;
+      const bowlingStrikeRate = bowlingWickets > 0 ? bowlingBalls2 / bowlingWickets : 0;
+
+      // ── Fielding ───────────────────────────────────────────
+      const [catches, runOuts, stumpings] = await Promise.all([
+        prisma.wicketEvent.count({ where: { fielderId: playerId, wicketType: 'CAUGHT' } }),
+        prisma.wicketEvent.count({ where: { fielderId: playerId, wicketType: 'RUN_OUT' } }),
+        prisma.wicketEvent.count({ where: { fielderId: playerId, wicketType: 'STUMPED' } }),
+      ]);
+
+      // Upsert career stats
+      await prisma.playerCareerStats.upsert({
+        where: { playerId },
+        create: {
+          playerId, battingMatches, battingInnings, battingRuns, battingBalls: battingBalls2,
+          battingHighScore, battingFours, battingSixes, battingHalfCenturies, battingCenturies,
+          battingNotOuts, battingAverage, battingStrikeRate,
+          bowlingMatches, bowlingBallsDelivered: bowlingBalls2, bowlingRuns: bowlingRuns2,
+          bowlingWickets, bowlingMaidens, bowlingBestFiguresWickets: bowlBestWkts,
+          bowlingBestFiguresRuns: bowlBestWkts > 0 ? bowlBestRuns : 0,
+          bowlingAverage, bowlingEconomy, bowlingStrikeRate, fiveWicketHauls,
+          catches, runOuts, stumpings,
+        },
+        update: {
+          battingMatches, battingInnings, battingRuns, battingBalls: battingBalls2,
+          battingHighScore, battingFours, battingSixes, battingHalfCenturies, battingCenturies,
+          battingNotOuts, battingAverage, battingStrikeRate,
+          bowlingMatches, bowlingBallsDelivered: bowlingBalls2, bowlingRuns: bowlingRuns2,
+          bowlingWickets, bowlingMaidens, bowlingBestFiguresWickets: bowlBestWkts,
+          bowlingBestFiguresRuns: bowlBestWkts > 0 ? bowlBestRuns : 0,
+          bowlingAverage, bowlingEconomy, bowlingStrikeRate, fiveWicketHauls,
+          catches, runOuts, stumpings,
+        },
+      });
+    } catch {
+      // Skip individual player failures — don't block response
+    }
+  }
+}

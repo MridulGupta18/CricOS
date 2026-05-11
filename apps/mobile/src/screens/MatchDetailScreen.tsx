@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, Pressable, Share, StatusBar, RefreshControl } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { matchesApi, scoringApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
+import { connectSocket, joinMatchRoom, leaveMatchRoom } from '@/lib/socket';
+import { useQueryClient } from '@tanstack/react-query';
 import { InningsState, BatsmanInnings, BowlerInnings } from '@cricket-os/shared';
-import { formatOvers } from '@cricket-os/scoring-engine';
+import { formatOvers, generateCommentary } from '@cricket-os/scoring-engine';
 import { useScorecardShare } from '@/components/ScorecardShare';
 import { C, F, R, S } from '@/lib/theme';
 
@@ -155,7 +157,20 @@ function ExtrasRow({ inn }: { inn: InningsState }) {
   );
 }
 
-// ── Over-by-over timeline ──────────────────────────────────────────────────
+// ── Ball label helper ──────────────────────────────────────────────────────
+function ballLabel(b: any): { label: string; bg: string; fg: string; border: string } {
+  if (b.isWicket)                  return { label: 'W',             bg: 'rgba(239,68,68,0.15)',   fg: C.red,    border: C.red + '40' };
+  if (b.extraType === 'WIDE')      return { label: 'Wd',            bg: 'rgba(255,255,255,0.04)', fg: C.orange, border: C.orange + '40' };
+  if (b.extraType === 'NO_BALL')   return { label: b.isFreeHit ? 'NB⚡' : 'Nb', bg: 'rgba(255,255,255,0.04)', fg: C.orange, border: C.orange + '40' };
+  if (b.extraType === 'BYE')       return { label: `B${b.extraRuns}`,  bg: 'rgba(255,255,255,0.04)', fg: C.textMuted, border: C.border };
+  if (b.extraType === 'LEG_BYE')   return { label: `Lb${b.extraRuns}`, bg: 'rgba(255,255,255,0.04)', fg: C.textMuted, border: C.border };
+  if (b.runs === 6)                return { label: '6',             bg: 'rgba(245,158,11,0.15)', fg: C.orange, border: C.orange + '40' };
+  if (b.runs === 4)                return { label: '4',             bg: 'rgba(16,185,129,0.15)', fg: C.green,  border: C.green + '40' };
+  if (b.runs === 0)                return { label: '·',             bg: 'rgba(255,255,255,0.04)', fg: C.textMuted, border: C.border };
+  return                                  { label: `${b.runs}`,     bg: 'rgba(255,255,255,0.04)', fg: C.textSub,   border: C.border };
+}
+
+// ── Over-by-over timeline with ball commentary ─────────────────────────────
 function OverTimeline({ ballEvents, playerById }: { ballEvents: any[]; playerById: (id: string) => string }) {
   if (!ballEvents.length) return (
     <View style={{ alignItems: 'center', paddingVertical: 40 }}>
@@ -163,7 +178,6 @@ function OverTimeline({ ballEvents, playerById }: { ballEvents: any[]; playerByI
     </View>
   );
 
-  // Group by over
   const overs: Record<number, any[]> = {};
   for (const b of ballEvents) {
     if (!overs[b.overNumber]) overs[b.overNumber] = [];
@@ -172,37 +186,48 @@ function OverTimeline({ ballEvents, playerById }: { ballEvents: any[]; playerByI
 
   return (
     <View style={{ gap: S.md }}>
-      {Object.entries(overs).map(([ov, balls]) => {
-        const legalBalls = balls.filter((b: any) => b.isLegalBall);
-        const runs = balls.reduce((s: number, b: any) => s + b.runs + b.extraRuns, 0);
+      {Object.entries(overs).reverse().map(([ov, balls]) => {
+        const runs    = balls.reduce((s: number, b: any) => s + b.runs + b.extraRuns, 0);
         const wickets = balls.filter((b: any) => b.isWicket).length;
         return (
           <View key={ov} style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
+            {/* Over header */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.md, paddingVertical: S.sm, backgroundColor: '#0D1220', borderBottomWidth: 1, borderBottomColor: C.border }}>
               <Text style={{ fontFamily: F.bold, fontSize: 12, color: C.textSub }}>Over {parseInt(ov) + 1}</Text>
               <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted }}>
-                {playerById(balls[0]?.bowlerId ?? '')}  ·  {runs} runs{wickets ? `  ${wickets}W` : ''}
+                {playerById(balls[0]?.bowlerId ?? '')}  ·  {runs} run{runs !== 1 ? 's' : ''}{wickets ? `  ${wickets}W` : ''}
               </Text>
             </View>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, padding: S.md }}>
+            {/* Ball dots */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, paddingHorizontal: S.md, paddingTop: S.md, paddingBottom: S.sm }}>
               {balls.map((b: any, i: number) => {
-                let label = '';
-                let bg    = 'rgba(255,255,255,0.04)';
-                let fg    = C.textSub;
-                let border = C.border;
-                if (b.isWicket)           { label = 'W'; bg = 'rgba(239,68,68,0.15)'; fg = C.red; border = C.red + '40'; }
-                else if (b.extraType === 'WIDE')   { label = 'Wd'; fg = C.orange; border = C.orange + '40'; }
-                else if (b.extraType === 'NO_BALL') { label = b.isFreeHit ? 'NB⚡' : 'Nb'; fg = C.orange; border = C.orange + '40'; }
-                else if (b.extraType === 'BYE')    { label = `B${b.extraRuns}`; fg = C.textMuted; }
-                else if (b.extraType === 'LEG_BYE') { label = `Lb${b.extraRuns}`; fg = C.textMuted; }
-                else if (b.runs === 6)    { label = '6'; bg = 'rgba(245,158,11,0.15)'; fg = C.orange; border = C.orange + '40'; }
-                else if (b.runs === 4)    { label = '4'; bg = 'rgba(16,185,129,0.15)'; fg = C.green;  border = C.green + '40'; }
-                else if (b.runs === 0)    { label = '·'; fg = C.textMuted; }
-                else                      { label = `${b.runs}`; fg = C.textSub; }
-
+                const { label, bg, fg, border } = ballLabel(b);
                 return (
                   <View key={i} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: bg, borderWidth: 1.5, borderColor: border, alignItems: 'center', justifyContent: 'center' }}>
                     <Text style={{ fontFamily: F.bold, fontSize: 10, color: fg }}>{label}</Text>
+                  </View>
+                );
+              })}
+            </View>
+            {/* Ball-by-ball commentary */}
+            <View style={{ paddingHorizontal: S.md, paddingBottom: S.md, gap: 4 }}>
+              {[...balls].reverse().map((b: any, i: number) => {
+                const batsmanName = playerById(b.batsmanId).split(' ').pop() ?? '?';
+                const bowlerName  = playerById(b.bowlerId).split(' ').pop() ?? '?';
+                const fielderName = b.wicket?.fielderId ? playerById(b.wicket.fielderId).split(' ').pop() : undefined;
+                const commentary  = generateCommentary(
+                  { ...b, extras: b.extraType ? { type: b.extraType, runs: b.extraRuns } : null, wicket: b.isWicket && b.wicket ? b.wicket : null },
+                  batsmanName, bowlerName, fielderName
+                );
+                const { fg } = ballLabel(b);
+                return (
+                  <View key={i} style={{ flexDirection: 'row', gap: S.sm, alignItems: 'flex-start' }}>
+                    <Text style={{ fontFamily: F.bold, fontSize: 10, color: fg, width: 28, marginTop: 2 }}>
+                      {parseInt(ov)}.{b.ballNumber + 1}
+                    </Text>
+                    <Text style={{ flex: 1, fontFamily: F.reg, fontSize: 12, color: b.isWicket ? C.red : C.textSub, lineHeight: 18 }}>
+                      {commentary}
+                    </Text>
                   </View>
                 );
               })}
@@ -243,9 +268,30 @@ function InningsScorecard({ inningsState, rawInnings, playerById, title }: {
 export function MatchDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter(); const insets = useSafeAreaInsets();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, accessToken } = useAuthStore();
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>('Scorecard');
   const { shareAsText } = useScorecardShare({ match: match ?? {}, inningsStates, playerById });
+
+  // Join the match Socket.IO room for live score push
+  useEffect(() => {
+    if (!id) return;
+    const socket = connectSocket(accessToken ?? undefined);
+    joinMatchRoom(id);
+    const refresh = () => {
+      queryClient.invalidateQueries({ queryKey: ['match', id] });
+      queryClient.invalidateQueries({ queryKey: ['scorecard', id] });
+    };
+    socket.on('ball:scored', refresh);
+    socket.on('innings:complete', refresh);
+    socket.on('match:status:changed', refresh);
+    return () => {
+      socket.off('ball:scored', refresh);
+      socket.off('innings:complete', refresh);
+      socket.off('match:status:changed', refresh);
+      leaveMatchRoom(id);
+    };
+  }, [id, accessToken]);
 
   const { data: md, isLoading: ml, refetch } = useQuery({ queryKey: ['match', id], queryFn: () => matchesApi.get(id!), enabled: !!id });
   const { data: sc } = useQuery({ queryKey: ['scorecard', id], queryFn: () => scoringApi.getScorecard(id!), enabled: !!id });

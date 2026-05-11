@@ -258,6 +258,7 @@ model Match {
   @@index([status])
   @@index([shareToken])
   @@index([leagueId])
+  @@index([leagueId, status])                   // fast league standings query
   @@index([searchVector], type: Gin, map: "match_search_idx")
 }
 
@@ -347,6 +348,7 @@ model BallEvent {
   isBoundary     Boolean   @default(false)
   isSix          Boolean   @default(false)
   createdAt      DateTime  @default(now())
+  deletedAt      DateTime?  // soft-delete: set on undo, never hard-deleted
 
   innings  Innings      @relation(fields: [inningsId], references: [id], onDelete: Cascade)
   batsman  Player       @relation("BatsmanEvents", fields: [batsmanId], references: [id])
@@ -358,6 +360,8 @@ model BallEvent {
   @@index([batsmanId])
   @@index([bowlerId])
   @@index([clientId])
+  @@index([deletedAt])                          // fast filter for soft-deleted
+  @@index([inningsId, overNumber])              // fast per-over queries
 }
 
 enum ExtraType {

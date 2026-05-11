@@ -96,6 +96,7 @@ export interface InningsState {
   bowlers: BowlerInnings[];
   fallOfWickets: FallOfWicket[];
   currentPartnership: Partnership | null;
+  partnershipHistory: Partnership[];    // all completed partnerships in order
   currentStrikerId: string | null;
   currentNonStrikerId: string | null;
   nextBallIsFreeHit: boolean;

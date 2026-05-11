@@ -42,7 +42,7 @@ authRouter.post('/register', validate(registerSchema), async (req, res, next) =>
       data: { token: refreshToken, userId: user.id, expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
     });
 
-    res.status(201).json({ success: true, data: { user, accessToken, refreshToken } });
+    res.status(201).json({ success: true, data: { user: { id: user.id, email: user.email, name: user.name, role: user.role }, accessToken, refreshToken } });
   } catch (err) {
     next(err);
   }
@@ -65,9 +65,14 @@ authRouter.post('/login', validate(loginSchema), async (req, res, next) => {
 
     const accessToken = generateAccessToken({ id: user.id, email: user.email, role: user.role });
     const refreshToken = generateRefreshToken({ id: user.id });
-    await prisma.refreshToken.create({
-      data: { token: refreshToken, userId: user.id, expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
-    });
+
+    // Cleanup expired tokens for this user, then create new one
+    await prisma.$transaction([
+      prisma.refreshToken.deleteMany({ where: { userId: user.id, expiresAt: { lt: new Date() } } }),
+      prisma.refreshToken.create({
+        data: { token: refreshToken, userId: user.id, expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+      }),
+    ]);
 
     res.json({
       success: true,

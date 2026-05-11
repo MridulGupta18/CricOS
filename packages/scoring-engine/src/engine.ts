@@ -55,10 +55,11 @@ export function computeInningsState(
   let overHasWideOrNB  = false;
   const overBalls: BallEvent[] = [];
 
-  // Partnership tracking
+  // Partnership tracking — current and historical
   let partnershipRuns  = 0;
   let partnershipBalls = 0;
-  let partnershipStart = 0; // totalRuns at partnership start
+  let partnershipStart = 0;
+  const partnershipHistory: Partnership[] = [];
 
   for (const event of events) {
     const totalExtras = event.extras?.runs ?? 0;
@@ -144,7 +145,15 @@ export function computeInningsState(
         nonStrikerId = null; // non-striker was run out (or crossed and dismissed)
       }
 
-      // Reset partnership
+      // Archive current partnership before resetting
+      if ((partnershipRuns > 0 || partnershipBalls > 0) && strikerId !== null) {
+        partnershipHistory.push({
+          batsmanId1: strikerId ?? '',
+          batsmanId2: nonStrikerId ?? '',
+          runs: partnershipRuns,
+          balls: partnershipBalls,
+        });
+      }
       partnershipRuns  = 0;
       partnershipBalls = 0;
       partnershipStart = totalRuns;
@@ -258,11 +267,12 @@ export function computeInningsState(
     totalWickets,
     totalOvers: completedOvers + currentBallInOver / 10,
     extras,
-    currentOver:      currentOverState,
-    batsmen:          Array.from(batsmen.values()),
-    bowlers:          Array.from(bowlers.values()),
+    currentOver:         currentOverState,
+    batsmen:             Array.from(batsmen.values()),
+    bowlers:             Array.from(bowlers.values()),
     fallOfWickets,
     currentPartnership,
+    partnershipHistory,
     currentStrikerId:    strikerId,
     currentNonStrikerId: nonStrikerId,
     nextBallIsFreeHit:   nextIsFreeHit,
@@ -289,8 +299,9 @@ export function validateBallEvent(
   if (inningsState.totalWickets >= 10) return 'All wickets fallen — innings is complete';
   if (maxOvers > 0 && inningsState.totalOvers >= maxOvers) return 'Over limit reached — innings is complete';
 
-  // Bowler overs limit
-  if (maxOvers > 0) {
+  // Bowler overs limit (limited-overs formats only; TEST/CUSTOM have no cap)
+  const isLimitedOvers = maxOvers > 0 && matchFormat !== 'TEST' && matchFormat !== 'CUSTOM';
+  if (isLimitedOvers) {
     const maxBowlerOvers = Math.round(maxOvers * BOWLER_MAX_OVERS_RATIO);
     const bowlerDone     = bowlerOverCounts[event.bowlerId!] ?? 0;
     if (bowlerDone >= maxBowlerOvers) {
@@ -298,17 +309,22 @@ export function validateBallEvent(
     }
   }
 
-  // No consecutive overs by the same bowler
-  const isStartOfNewOver = inningsState.currentOver.legalBallsDelivered === 0;
-  if (isStartOfNewOver && lastOverBowlerId && lastOverBowlerId === event.bowlerId) {
+  // No consecutive overs by the same bowler.
+  // Fire on EVERY delivery of a new over (legalBallsDelivered === 0 means no legal
+  // ball has been bowled yet in this over, so any delivery is still "over N+1 ball 1").
+  if (inningsState.currentOver.legalBallsDelivered === 0 && lastOverBowlerId && lastOverBowlerId === event.bowlerId) {
     return 'Same bowler cannot bowl consecutive overs';
   }
 
-  // Free hit: only run-out type wickets are allowed
+  // Free hit: dismissals NOT allowed per Law 21.18 are blocked.
+  // FREE_HIT_SAFE_WICKET_TYPES = ['BOWLED','CAUGHT','LBW','STUMPED','HIT_WICKET']
+  // These are the types from which the batter is SAFE on a free hit.
+  // allowedOnFreeHit = true  → dismissal IS valid (e.g. RUN_OUT)
+  // allowedOnFreeHit = false → dismissal is blocked (e.g. BOWLED)
   if (inningsState.nextBallIsFreeHit && event.wicket) {
-    const safeOnFreeHit = !FREE_HIT_SAFE_WICKET_TYPES.includes(event.wicket.type);
-    if (!safeOnFreeHit) {
-      return `Batsman cannot be dismissed ${event.wicket.type} on a free hit`;
+    const allowedOnFreeHit = !FREE_HIT_SAFE_WICKET_TYPES.includes(event.wicket.type as any);
+    if (!allowedOnFreeHit) {
+      return `${event.wicket.type} is not a valid dismissal on a free hit`;
     }
   }
 
@@ -360,6 +376,68 @@ export function isPowerplay(overNumber: number, format: MatchFormat): boolean {
 
 export function maxBowlerOvers(totalOvers: number): number {
   return Math.round(totalOvers * BOWLER_MAX_OVERS_RATIO);
+}
+
+// ──────────────────────────────────────────────────────────────
+// COMMENTARY GENERATOR
+// Pure function: takes a ball event + player names, returns a
+// human-readable sentence for the Timeline / live feed.
+// ──────────────────────────────────────────────────────────────
+
+export function generateCommentary(
+  ball: BallEvent & { wicket?: any },
+  batsmanName: string,
+  bowlerName: string,
+  fielderName?: string
+): string {
+  const over = `${ball.overNumber}.${ball.ballNumber + 1}`;
+
+  if (ball.wicket) {
+    const type: string = ball.wicket.type;
+    switch (type) {
+      case 'BOWLED':            return `OUT! ${batsmanName} is bowled by ${bowlerName}!`;
+      case 'CAUGHT':            return fielderName
+        ? `OUT! ${batsmanName} caught ${fielderName} bowled ${bowlerName}!`
+        : `OUT! ${batsmanName} caught!`;
+      case 'LBW':               return `OUT! ${batsmanName} lbw b ${bowlerName}!`;
+      case 'RUN_OUT':           return fielderName
+        ? `OUT! ${batsmanName} run out (${fielderName})!`
+        : `OUT! ${batsmanName} run out!`;
+      case 'STUMPED':           return fielderName
+        ? `OUT! ${batsmanName} stumped ${fielderName} b ${bowlerName}!`
+        : `OUT! ${batsmanName} stumped!`;
+      case 'HIT_WICKET':        return `OUT! ${batsmanName} hit wicket b ${bowlerName}!`;
+      case 'RETIRED_HURT':      return `${batsmanName} retires hurt.`;
+      case 'OBSTRUCTING_FIELD': return `OUT! ${batsmanName} out obstructing the field!`;
+      case 'HANDLED_BALL':      return `OUT! ${batsmanName} out handled ball!`;
+      case 'TIMED_OUT':         return `OUT! ${batsmanName} timed out!`;
+      default:                  return `OUT! ${batsmanName} dismissed!`;
+    }
+  }
+
+  const extra = ball.extras?.type ?? null;
+  const extraRuns = ball.extras?.runs ?? 0;
+
+  if (extra === 'WIDE') {
+    return extraRuns > 1
+      ? `Wide. ${extraRuns} runs (wide + overthrows).`
+      : `Wide ball from ${bowlerName}.`;
+  }
+  if (extra === 'NO_BALL') {
+    const suffix = ball.isFreeHit ? ' FREE HIT next ball!' : '';
+    if (ball.runs === 4) return `No ball! FOUR off the bat too! Expensive from ${bowlerName}.${suffix}`;
+    if (ball.runs === 6) return `No ball! SIX as well! Huge over.${suffix}`;
+    return `No ball from ${bowlerName}.${suffix}`;
+  }
+  if (extra === 'BYE')     return `${extraRuns} bye${extraRuns !== 1 ? 's' : ''}.`;
+  if (extra === 'LEG_BYE') return `${extraRuns} leg bye${extraRuns !== 1 ? 's' : ''} off the pad.`;
+  if (extra === 'PENALTY') return `${extraRuns} penalty run${extraRuns !== 1 ? 's' : ''} awarded.`;
+
+  if (ball.runs === 0) return `Good ball from ${bowlerName}. Dot.`;
+  if (ball.runs === 4) return `FOUR! ${batsmanName} finds the boundary off ${bowlerName}!`;
+  if (ball.runs === 6) return `SIX! ${batsmanName} clears the rope off ${bowlerName}!`;
+  const words = ['', 'one', 'two', 'three', 'four', 'five', 'six'];
+  return `${batsmanName} takes ${words[ball.runs] ?? ball.runs} run${ball.runs !== 1 ? 's' : ''}.`;
 }
 
 // ──────────────────────────────────────────────────────────────
