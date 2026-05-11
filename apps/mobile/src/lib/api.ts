@@ -61,6 +61,8 @@ export const matchesApi = {
   create: (data: unknown) => apiClient.post('/matches', data),
   setToss: (id: string, data: unknown) => apiClient.patch(`/matches/${id}/toss`, data),
   setResult: (id: string, data: unknown) => apiClient.patch(`/matches/${id}/result`, data),
+  assignScorer: (id: string, scorerId: string | null) => apiClient.patch(`/matches/${id}/scorer`, { scorerId }),
+  getEligibleScorers: (id: string) => apiClient.get(`/matches/${id}/eligible-scorers`),
 };
 
 export const scoringApi = {

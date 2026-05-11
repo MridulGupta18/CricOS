@@ -50,6 +50,7 @@ const matchSelect = {
   winMargin: true,
   winMarginType: true,
   createdAt: true,
+  creatorId: true,
   homeTeam: { select: { id: true, name: true, shortName: true, logoUrl: true } },
   awayTeam: { select: { id: true, name: true, shortName: true, logoUrl: true } },
   scorer: { select: { id: true, name: true } },
@@ -192,5 +193,120 @@ matchesRouter.delete('/:id', requireAuth, async (req: AuthRequest, res, next) =>
     }
     await prisma.match.delete({ where: { id: req.params.id } });
     res.json({ success: true, data: null });
+  } catch (err) { next(err); }
+});
+
+// PATCH /api/v1/matches/:id/scorer — assign or change the scorer
+// Caller must be the match creator OR the current scorer OR ADMIN/MASTER.
+// The new scorer must be a player in one of the match's two teams and have a linked user account.
+const assignScorerSchema = z.object({
+  scorerId: z.string().cuid().nullable(), // null = unassign
+});
+
+matchesRouter.patch('/:id/scorer', requireAuth, validate(assignScorerSchema), async (req: AuthRequest, res, next) => {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: req.params.id },
+      select: { creatorId: true, scorerId: true, homeTeamId: true, awayTeamId: true },
+    });
+    if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
+
+    const uid = req.user!.id;
+    const isAuthorised =
+      match.creatorId === uid ||
+      match.scorerId  === uid ||
+      req.user!.role === 'ADMIN' ||
+      req.user!.role === 'MASTER';
+
+    if (!isAuthorised) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Only the match creator or current scorer can reassign the scorer' },
+      });
+    }
+
+    const { scorerId } = req.body;
+
+    if (scorerId !== null) {
+      // Verify the new scorer is a player in one of the two teams and has a linked user account
+      const player = await prisma.player.findFirst({
+        where: {
+          userId: scorerId,
+          teamMemberships: {
+            some: {
+              isActive: true,
+              teamId: { in: [match.homeTeamId, match.awayTeamId] },
+            },
+          },
+        },
+        select: { id: true, name: true },
+      });
+
+      if (!player) {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: 'NOT_ELIGIBLE',
+            message: 'Scorer must be an active player in one of the two teams playing this match',
+          },
+        });
+      }
+    }
+
+    const updated = await prisma.match.update({
+      where: { id: req.params.id },
+      data: { scorerId },
+      select: matchSelect,
+    });
+
+    res.json({ success: true, data: updated });
+  } catch (err) { next(err); }
+});
+
+// GET /api/v1/matches/:id/eligible-scorers — list players from both teams who have user accounts
+matchesRouter.get('/:id/eligible-scorers', requireAuth, async (req: AuthRequest, res, next) => {
+  try {
+    const match = await prisma.match.findUnique({
+      where: { id: req.params.id },
+      select: { creatorId: true, scorerId: true, homeTeamId: true, awayTeamId: true,
+                homeTeam: { select: { id: true, name: true, shortName: true } },
+                awayTeam: { select: { id: true, name: true, shortName: true } } },
+    });
+    if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
+
+    const uid = req.user!.id;
+    const isAuthorised =
+      match.creatorId === uid || match.scorerId === uid ||
+      req.user!.role === 'ADMIN' || req.user!.role === 'MASTER';
+    if (!isAuthorised) {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or scorer can view eligible scorers' } });
+    }
+
+    // Find all active players in both teams who have a linked user account
+    const members = await prisma.teamMember.findMany({
+      where: {
+        isActive: true,
+        teamId: { in: [match.homeTeamId, match.awayTeamId] },
+        player: { userId: { not: null } },
+      },
+      select: {
+        teamId: true,
+        role: true,
+        player: { select: { id: true, name: true, userId: true, role: true, jerseyNumber: true } },
+      },
+      orderBy: { player: { name: 'asc' } },
+    });
+
+    const result = members.map(m => ({
+      userId:      m.player.userId!,
+      playerId:    m.player.id,
+      name:        m.player.name,
+      playerRole:  m.player.role,
+      teamRole:    m.role,
+      jerseyNumber: m.player.jerseyNumber,
+      team:        m.teamId === match.homeTeamId ? match.homeTeam : match.awayTeam,
+    }));
+
+    res.json({ success: true, data: result, meta: { currentScorerId: match.scorerId } });
   } catch (err) { next(err); }
 });

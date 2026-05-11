@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
-import { View, Text, ScrollView, Pressable, Share, StatusBar, RefreshControl } from 'react-native';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { View, Text, ScrollView, Pressable, Share, StatusBar, RefreshControl, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import BottomSheet, { BottomSheetView, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { matchesApi, scoringApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { connectSocket, joinMatchRoom, leaveMatchRoom } from '@/lib/socket';
-import { useQueryClient } from '@tanstack/react-query';
 import { InningsState, BatsmanInnings, BowlerInnings } from '@cricket-os/shared';
 import { formatOvers, generateCommentary } from '@cricket-os/scoring-engine';
 import { useScorecardShare, ScorecardShareWrapper } from '@/components/ScorecardShare';
@@ -315,6 +315,8 @@ export function MatchDetailScreen() {
   const { isAuthenticated, accessToken } = useAuthStore();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>('Scorecard');
+  const [scorerAssigning, setScorerAssigning] = useState(false);
+  const scorerSheetRef = useRef<BottomSheet>(null);
 
   // Join the match Socket.IO room for live score push
   useEffect(() => {
@@ -364,6 +366,74 @@ export function MatchDetailScreen() {
   }, [match, scData]);
   const playerById = (id: string) => playerMap.get(id) ?? id?.slice(0, 8) ?? '?';
   const { shotRef, shareAsImage } = useScorecardShare({ match: match ?? {}, inningsStates, playerById });
+
+  // Eligible scorers — fetched on demand when the picker sheet opens
+  const { data: eligibleData, refetch: refetchEligible } = useQuery({
+    queryKey: ['eligible-scorers', id],
+    queryFn: () => matchesApi.getEligibleScorers(id!),
+    enabled: false,
+  });
+  const eligibleScorers: any[] = eligibleData?.data?.data ?? [];
+  const currentScorerId: string | null = eligibleData?.data?.meta?.currentScorerId ?? match?.scorer?.id ?? null;
+
+  // Determine if the current user can manage scorer assignment
+  const authUser = useAuthStore((s) => s.user);
+  const canManageScorer = !!(authUser && match && (
+    match.creatorId === authUser.id ||
+    match.scorer?.id === authUser.id ||
+    authUser.role === 'ADMIN' ||
+    authUser.role === 'MASTER'
+  ));
+
+  function openOverflowMenu() {
+    const options = ['Share Scorecard', canManageScorer ? 'Change Scorer' : null, 'Cancel']
+      .filter(Boolean) as string[];
+    Alert.alert('Match Options', undefined, [
+      { text: 'Share Scorecard', onPress: shareAsImage },
+      ...(canManageScorer ? [{
+        text: match?.scorer ? 'Change Scorer' : 'Assign Scorer',
+        onPress: async () => {
+          await refetchEligible();
+          scorerSheetRef.current?.expand();
+        },
+      }] : []),
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
+  }
+
+  async function handleAssignScorer(userId: string) {
+    if (!id || scorerAssigning) return;
+    setScorerAssigning(true);
+    try {
+      await matchesApi.assignScorer(id, userId);
+      scorerSheetRef.current?.close();
+      queryClient.invalidateQueries({ queryKey: ['match', id] });
+      queryClient.invalidateQueries({ queryKey: ['eligible-scorers', id] });
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.error?.message ?? 'Could not assign scorer.');
+    } finally {
+      setScorerAssigning(false);
+    }
+  }
+
+  async function handleRemoveScorer() {
+    if (!id || scorerAssigning) return;
+    Alert.alert('Remove Scorer', 'Remove the current scorer assignment?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive',
+        onPress: async () => {
+          setScorerAssigning(true);
+          try {
+            await matchesApi.assignScorer(id, null);
+            queryClient.invalidateQueries({ queryKey: ['match', id] });
+            queryClient.invalidateQueries({ queryKey: ['eligible-scorers', id] });
+          } catch {}
+          finally { setScorerAssigning(false); }
+        },
+      },
+    ]);
+  }
 
   if (!match && ml) return (
     <View style={{ flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' }}>
@@ -419,7 +489,7 @@ export function MatchDetailScreen() {
             </Text>
             {match.league && <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted }}>{match.league.name}</Text>}
           </View>
-          <Pressable onPress={shareAsImage} hitSlop={12}>
+          <Pressable onPress={openOverflowMenu} hitSlop={12}>
             <Text style={{ fontFamily: F.reg, fontSize: 18, color: C.textSub }}>⋯</Text>
           </Pressable>
         </View>
@@ -599,24 +669,120 @@ export function MatchDetailScreen() {
 
           {/* INFO */}
           {tab === 'Info' && (
-            <View style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
-              {[
-                ['Format',  `${match.format} · ${match.overs} overs`],
-                ['Venue',   match.venue ?? 'TBD'],
-                ...(match.league ? [['League', match.league.name]] : []),
-                ...(match.scheduledAt ? [['Date', new Date(match.scheduledAt).toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })]] : []),
-                ...(match.tossWinnerId ? [['Toss', `${match.tossWinnerId === match.homeTeam?.id ? match.homeTeam?.shortName : match.awayTeam?.shortName} won · chose to ${match.tossDecision?.toLowerCase() ?? 'bat'}`]] : []),
-              ].map(([l, v], i, arr) => (
-                <View key={l as string} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: S.lg, paddingVertical: 13, borderBottomWidth: i < arr.length - 1 ? 1 : 0, borderBottomColor: C.border }}>
-                  <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted }}>{l}</Text>
-                  <Text style={{ fontFamily: F.medium, fontSize: 13, color: C.text, flex: 1, textAlign: 'right' }} numberOfLines={1}>{v}</Text>
+            <View>
+              <View style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.border, overflow: 'hidden', marginBottom: S.lg }}>
+                {[
+                  ['Format',  `${match.format} · ${match.overs} overs`],
+                  ['Venue',   match.venue ?? 'TBD'],
+                  ...(match.league ? [['League', match.league.name]] : []),
+                  ...(match.scheduledAt ? [['Date', new Date(match.scheduledAt).toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })]] : []),
+                  ...(match.tossWinnerId ? [['Toss', `${match.tossWinnerId === match.homeTeam?.id ? match.homeTeam?.shortName : match.awayTeam?.shortName} won · chose to ${match.tossDecision?.toLowerCase() ?? 'bat'}`]] : []),
+                ].map(([l, v], i, arr) => (
+                  <View key={l as string} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: S.lg, paddingVertical: 13, borderBottomWidth: i < arr.length - 1 ? 1 : 0, borderBottomColor: C.border }}>
+                    <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted }}>{l}</Text>
+                    <Text style={{ fontFamily: F.medium, fontSize: 13, color: C.text, flex: 1, textAlign: 'right' }} numberOfLines={1}>{v}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* Scorer card */}
+              <View style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: S.lg, paddingVertical: 13 }}>
+                  <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted }}>Scorer</Text>
+                  <View style={{ flex: 1, alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'flex-end', gap: S.sm }}>
+                    {match.scorer ? (
+                      <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.text }}>{match.scorer.name}</Text>
+                    ) : (
+                      <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted, fontStyle: 'italic' }}>Not assigned</Text>
+                    )}
+                    {canManageScorer && (
+                      <Pressable
+                        onPress={async () => { await refetchEligible(); scorerSheetRef.current?.expand(); }}
+                        style={{ backgroundColor: C.primary + '22', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: C.primary + '44' }}>
+                        <Text style={{ fontFamily: F.semi, fontSize: 11, color: C.primaryLight }}>
+                          {match.scorer ? 'Change' : 'Assign'}
+                        </Text>
+                      </Pressable>
+                    )}
+                    {canManageScorer && match.scorer && (
+                      <Pressable onPress={handleRemoveScorer}
+                        style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)' }}>
+                        <Text style={{ fontFamily: F.semi, fontSize: 11, color: C.red }}>Remove</Text>
+                      </Pressable>
+                    )}
+                  </View>
                 </View>
-              ))}
+                {match.scorer && (
+                  <View style={{ paddingHorizontal: S.lg, paddingBottom: S.sm }}>
+                    <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted }}>
+                      Only this person can score balls and reassign the scorer role
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
           )}
         </View>
       </ScrollView>
       </ScorecardShareWrapper>
+
+      {/* ── Scorer picker sheet ── */}
+      <BottomSheet ref={scorerSheetRef} index={-1} snapPoints={['55%']} enablePanDownToClose
+        backgroundStyle={{ backgroundColor: '#121826' }} handleIndicatorStyle={{ backgroundColor: C.border }}>
+        <BottomSheetView style={{ paddingHorizontal: S.xl, paddingBottom: S.md }}>
+          <Text style={{ fontFamily: F.bold, fontSize: 17, color: C.text, marginTop: S.sm, marginBottom: 4 }}>
+            {match.scorer ? 'Change Scorer' : 'Assign Scorer'}
+          </Text>
+          <Text style={{ fontFamily: F.reg, fontSize: 12, color: C.textMuted, marginBottom: S.lg }}>
+            Select a player from either team. Only they can score balls and reassign this role.
+          </Text>
+        </BottomSheetView>
+        <BottomSheetFlatList
+          data={eligibleScorers}
+          keyExtractor={(item: any) => item.userId}
+          contentContainerStyle={{ paddingHorizontal: S.xl, paddingBottom: insets.bottom + S.xl, gap: S.sm }}
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+              <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted, textAlign: 'center' }}>
+                No eligible players found.{'\n'}Players must have a registered account to be assigned as scorer.
+              </Text>
+            </View>
+          }
+          renderItem={({ item }: { item: any }) => {
+            const isCurrent = item.userId === currentScorerId;
+            return (
+              <Pressable
+                onPress={() => !isCurrent && handleAssignScorer(item.userId)}
+                disabled={scorerAssigning || isCurrent}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md,
+                  borderRadius: R.lg, borderWidth: 1.5,
+                  backgroundColor: isCurrent ? `${C.green}15` : pressed ? C.card2 : C.card,
+                  borderColor: isCurrent ? `${C.green}50` : C.border,
+                  opacity: scorerAssigning && !isCurrent ? 0.5 : 1,
+                })}>
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: isCurrent ? `${C.green}33` : C.primary + '33', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontFamily: F.bold, fontSize: 14, color: isCurrent ? C.green : C.primaryLight }}>
+                    {item.name?.split(' ').map((w: string) => w[0]).join('').slice(0, 2)}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontFamily: F.semi, fontSize: 14, color: isCurrent ? C.green : C.text }}>{item.name}</Text>
+                  <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted }}>
+                    {item.team?.shortName} · {item.playerRole?.replace('_', ' ') ?? 'Player'}
+                    {item.jerseyNumber != null ? ` · #${item.jerseyNumber}` : ''}
+                  </Text>
+                </View>
+                {isCurrent && (
+                  <View style={{ backgroundColor: `${C.green}20`, borderRadius: R.sm, paddingHorizontal: 8, paddingVertical: 3 }}>
+                    <Text style={{ fontFamily: F.bold, fontSize: 10, color: C.green }}>CURRENT</Text>
+                  </View>
+                )}
+              </Pressable>
+            );
+          }}
+        />
+      </BottomSheet>
 
       {/* Bottom CTA */}
       <View style={{ paddingHorizontal: S.xl, paddingVertical: S.md, paddingBottom: insets.bottom + S.sm, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.card }}>
