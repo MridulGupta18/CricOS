@@ -362,6 +362,7 @@ model BallEvent {
   @@index([bowlerId])
   @@index([clientId])
   @@index([deletedAt])                          // fast filter for soft-deleted
+  @@index([inningsId, deletedAt])               // fast filtered ball queries (active balls per innings)
   @@index([inningsId, overNumber])              // fast per-over queries
 }
 

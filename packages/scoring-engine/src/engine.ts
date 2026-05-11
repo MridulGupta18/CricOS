@@ -222,9 +222,13 @@ export function computeInningsState(
   }
 
   // ── Bowler economy ────────────────────────────────────────
-  for (const [, bowl] of bowlers) {
-    const overs = bowl.overs + (completedOvers === Math.floor(bowl.overs) ? currentBallInOver / BALLS_PER_OVER : 0);
-    bowl.economy = overs > 0 ? bowl.runs / overs : 0;
+  // The current bowler is whoever bowled the last ball.
+  // Only they get the partial-over balls added for economy calculation.
+  const lastBowlerId = events[events.length - 1]?.bowlerId ?? '';
+  for (const [id, bowl] of bowlers) {
+    const partialOvers = id === lastBowlerId ? currentBallInOver / BALLS_PER_OVER : 0;
+    const totalOvers = bowl.overs + partialOvers;
+    bowl.economy = totalOvers > 0 ? bowl.runs / totalOvers : 0;
   }
 
   // ── Determine non-striker: active batsman who is not the striker ──

@@ -11,7 +11,7 @@ import { queueBallEvent } from '@/offline/storage';
 import { useScoringStore } from '@/stores/scoringStore';
 import { connectSocket, joinMatchRoom, leaveMatchRoom } from '@/lib/socket';
 import { useAuthStore } from '@/stores/authStore';
-import { ExtraType, WicketType, BallEvent, InningsState } from '@cricket-os/shared';
+import { ExtraType, WicketType, BallEvent, InningsState, FREE_HIT_SAFE_WICKET_TYPES } from '@cricket-os/shared';
 import { isPowerplay } from '@cricket-os/scoring-engine';
 import { C, F, R, S } from '@/lib/theme';
 
@@ -30,8 +30,8 @@ const WICKET_TYPES: { value: WicketType; label: string }[] = [
   { value: 'TIMED_OUT',         label: 'Timed Out' },
 ];
 
-// Free hit: these dismissals are NOT allowed
-const FREE_HIT_BLOCKED: WicketType[] = ['BOWLED', 'CAUGHT', 'LBW', 'STUMPED', 'HIT_WICKET'];
+// Free hit: these dismissals are NOT allowed (sourced from shared constants)
+const FREE_HIT_BLOCKED = FREE_HIT_SAFE_WICKET_TYPES as readonly WicketType[];
 
 const RUN_CFG: Record<number, { bg: string; border: string; color: string }> = {
   0: { bg: 'rgba(255,255,255,0.04)', border: C.border,               color: C.textMuted },

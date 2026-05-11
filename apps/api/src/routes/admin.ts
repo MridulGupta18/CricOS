@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@cricket-os/db';
 import { requireAuth, requirePermission, requireAtLeast, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
-import { assignableRoles, MASTER_EMAIL, can } from '../access-control';
+import { assignableRoles, MASTER_EMAIL, can, ROLE_HIERARCHY, permissionsFor } from '../access-control';
 import { generateAccessToken, generateRefreshToken } from '../middleware/auth';
 
 export const adminRouter = Router();
@@ -142,11 +142,10 @@ adminRouter.delete('/users/:id', requireAuth, requireAtLeast('MASTER'), async (r
 // ─── ROLE SUMMARY ────────────────────────────────────────────
 // GET /api/v1/admin/roles — returns role hierarchy + permissions for documentation
 adminRouter.get('/roles', requireAuth, requireAtLeast('ADMIN'), async (req: AuthRequest, res) => {
-  const { ROLE_HIERARCHY, permissionsFor } = require('../access-control');
-  const summary = ROLE_HIERARCHY.map((r: string) => ({
+  const summary = ROLE_HIERARCHY.map((r) => ({
     role: r,
     permissions: permissionsFor(r),
-    canAssign: assignableRoles(r as any),
+    canAssign: assignableRoles(r),
   }));
   res.json({ success: true, data: summary });
 });

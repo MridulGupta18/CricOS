@@ -3,8 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '@cricket-os/db';
 import { validate } from '../middleware/validate';
-import { requireAuth, generateAccessToken, generateRefreshToken, AuthRequest } from '../middleware/auth';
-import jwt from 'jsonwebtoken';
+import { requireAuth, generateAccessToken, generateRefreshToken, verifyRefreshToken, AuthRequest } from '../middleware/auth';
 
 export const authRouter = Router();
 
@@ -97,8 +96,7 @@ authRouter.post('/refresh', async (req, res, next) => {
       return res.status(400).json({ success: false, error: { code: 'NO_TOKEN', message: 'Refresh token required' } });
     }
 
-    const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production';
-    const payload = jwt.verify(refreshToken, JWT_SECRET + '_refresh') as { id: string };
+    const payload = verifyRefreshToken(refreshToken);
 
     const stored = await prisma.refreshToken.findUnique({ where: { token: refreshToken } });
     if (!stored || stored.expiresAt < new Date()) {

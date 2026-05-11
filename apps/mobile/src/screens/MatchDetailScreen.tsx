@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, Share, StatusBar, RefreshControl } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -271,7 +271,6 @@ export function MatchDetailScreen() {
   const { isAuthenticated, accessToken } = useAuthStore();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>('Scorecard');
-  const { shareAsText } = useScorecardShare({ match: match ?? {}, inningsStates, playerById });
 
   // Join the match Socket.IO room for live score push
   useEffect(() => {
@@ -305,17 +304,22 @@ export function MatchDetailScreen() {
   const rawInn1      = rawInnings.find((i: any) => i.inningsNumber === 1);
   const rawInn2      = rawInnings.find((i: any) => i.inningsNumber === 2);
 
-  // Build a player lookup from all team members
-  const allMembers: any[] = [
-    ...(match?.homeTeam?.members ?? []),
-    ...(match?.awayTeam?.members ?? []),
-    ...(scData?.match?.homeTeam?.members ?? []),
-    ...(scData?.match?.awayTeam?.members ?? []),
-  ];
-  const playerById = (id: string) => {
-    const m = allMembers.find(m => m.player?.id === id);
-    return m?.player?.name ?? id?.slice(0, 8) ?? '?';
-  };
+  // Build a player lookup map — memoized so O(1) lookup instead of O(n) per render
+  const playerMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const sources = [
+      ...(match?.homeTeam?.members ?? []),
+      ...(match?.awayTeam?.members ?? []),
+      ...(scData?.match?.homeTeam?.members ?? []),
+      ...(scData?.match?.awayTeam?.members ?? []),
+    ];
+    for (const m of sources) {
+      if (m?.player?.id) map.set(m.player.id, m.player.name);
+    }
+    return map;
+  }, [match, scData]);
+  const playerById = (id: string) => playerMap.get(id) ?? id?.slice(0, 8) ?? '?';
+  const { shareAsText } = useScorecardShare({ match: match ?? {}, inningsStates, playerById });
 
   if (!match && ml) return (
     <View style={{ flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' }}>

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { prisma } from '@cricket-os/db';
 import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
@@ -17,6 +18,18 @@ const createMatchSchema = z.object({
   leagueId: z.string().cuid().optional(),
   title: z.string().optional(),
   isPublic: z.boolean().default(true),
+});
+
+const tossSchema = z.object({
+  tossWinnerId: z.string().cuid(),
+  tossDecision: z.enum(['BAT', 'BOWL']),
+});
+
+const resultSchema = z.object({
+  winnerId:       z.string().cuid().optional(),
+  resultType:     z.enum(['WIN', 'TIE', 'NO_RESULT', 'DRAW']),
+  winMargin:      z.number().int().positive().optional(),
+  winMarginType:  z.enum(['RUNS', 'WICKETS']).optional(),
 });
 
 const matchSelect = {
@@ -64,6 +77,7 @@ matchesRouter.get('/', async (req, res, next) => {
               id: true, inningsNumber: true, battingTeamId: true, bowlingTeamId: true,
               totalRuns: true, totalWickets: true, completedOvers: true, extraBalls: true,
               isCompleted: true,
+              // No ballEvents here — only available on /matches/:id detail view
             },
             orderBy: { inningsNumber: 'asc' },
           },
@@ -122,7 +136,8 @@ matchesRouter.post('/', requireAuth, requirePermission('match:create'), validate
   try {
     const data = req.body;
     const match = await prisma.match.create({
-      data: { ...data, creatorId: req.user!.id, status: 'UPCOMING' },
+      // Use cryptographically random UUID for shareToken (not sequential cuid)
+      data: { ...data, creatorId: req.user!.id, status: 'UPCOMING', shareToken: randomUUID() },
       select: matchSelect,
     });
     res.status(201).json({ success: true, data: match });
@@ -130,7 +145,7 @@ matchesRouter.post('/', requireAuth, requirePermission('match:create'), validate
 });
 
 // PATCH /api/v1/matches/:id/toss — set toss result
-matchesRouter.patch('/:id/toss', requireAuth, async (req: AuthRequest, res, next) => {
+matchesRouter.patch('/:id/toss', requireAuth, validate(tossSchema), async (req: AuthRequest, res, next) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
@@ -149,7 +164,7 @@ matchesRouter.patch('/:id/toss', requireAuth, async (req: AuthRequest, res, next
 });
 
 // PATCH /api/v1/matches/:id/result — set match result
-matchesRouter.patch('/:id/result', requireAuth, async (req: AuthRequest, res, next) => {
+matchesRouter.patch('/:id/result', requireAuth, validate(resultSchema), async (req: AuthRequest, res, next) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });

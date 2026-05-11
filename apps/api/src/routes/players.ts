@@ -68,11 +68,54 @@ playersRouter.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/v1/players/:id/stats — full career stats computed from ball events
+// GET /api/v1/players/:id/stats — career stats from pre-computed table (fast path)
 playersRouter.get('/:id/stats', async (req, res, next) => {
   try {
     const playerId = req.params.id;
 
+    // Fast path: return pre-computed aggregates (updated after every match)
+    const cached = await prisma.playerCareerStats.findUnique({ where: { playerId } });
+    if (cached) {
+      return res.json({
+        success: true,
+        data: {
+          batting: {
+            matches: cached.battingMatches,
+            innings: cached.battingInnings,
+            runs: cached.battingRuns,
+            balls: cached.battingBalls,
+            highScore: cached.battingHighScore,
+            average: cached.battingAverage,
+            strikeRate: cached.battingStrikeRate,
+            fours: cached.battingFours,
+            sixes: cached.battingSixes,
+            halfCenturies: cached.battingHalfCenturies,
+            centuries: cached.battingCenturies,
+            notOuts: cached.battingNotOuts,
+          },
+          bowling: {
+            matches: cached.bowlingMatches,
+            balls: cached.bowlingBallsDelivered,
+            overs: parseFloat((Math.floor(cached.bowlingBallsDelivered / 6) + (cached.bowlingBallsDelivered % 6) / 10).toFixed(1)),
+            runs: cached.bowlingRuns,
+            wickets: cached.bowlingWickets,
+            maidens: cached.bowlingMaidens,
+            average: cached.bowlingAverage,
+            economy: cached.bowlingEconomy,
+            strikeRate: cached.bowlingStrikeRate,
+            bestFigures: cached.bowlingBestFiguresWickets > 0 ? `${cached.bowlingBestFiguresWickets}/${cached.bowlingBestFiguresRuns}` : '—',
+            fiveWicketHauls: cached.fiveWicketHauls,
+          },
+          fielding: {
+            catches: cached.catches,
+            runOuts: cached.runOuts,
+            stumpings: cached.stumpings,
+          },
+        },
+      });
+    }
+
+    // Slow path: compute from ball events (for players whose stats haven't been indexed yet)
     // Fetch all innings this player batted in
     const battingInningsRaw = await prisma.innings.findMany({
       where: { ballEvents: { some: { batsmanId: playerId } } },
@@ -202,8 +245,13 @@ playersRouter.post('/', requireAuth, requirePermission('player:create'), validat
 });
 
 // PATCH /api/v1/players/:id
-playersRouter.patch('/:id', requireAuth, async (req: AuthRequest, res, next) => {
+playersRouter.patch('/:id', requireAuth, requirePermission('player:update'), validate(createPlayerSchema.partial()), async (req: AuthRequest, res, next) => {
   try {
+    const existing = await prisma.player.findUnique({ where: { id: req.params.id }, select: { userId: true } });
+    if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Player not found' } });
+    if (existing.userId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You can only edit your own player profile' } });
+    }
     const player = await prisma.player.update({ where: { id: req.params.id }, data: req.body });
     res.json({ success: true, data: player });
   } catch (err) { next(err); }

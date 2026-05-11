@@ -7,13 +7,15 @@ import { validate } from '../middleware/validate';
 export const teamsRouter = Router();
 
 const createTeamSchema = z.object({
-  name: z.string().min(2).max(100),
+  name:      z.string().min(2).max(100),
   shortName: z.string().min(2).max(5).toUpperCase(),
-  city: z.string().optional(),
-  country: z.string().default('India'),
+  city:      z.string().optional(),
+  country:   z.string().default('India'),
 });
 
-// GET /api/v1/teams/:id
+const updateTeamSchema = createTeamSchema.partial();
+
+// GET /api/v1/teams/:id — public
 teamsRouter.get('/:id', async (req, res, next) => {
   try {
     const team = await prisma.team.findUnique({
@@ -31,7 +33,7 @@ teamsRouter.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/v1/teams
+// POST /api/v1/teams — create a team
 teamsRouter.post('/', requireAuth, requirePermission('team:create'), validate(createTeamSchema), async (req: AuthRequest, res, next) => {
   try {
     const team = await prisma.team.create({ data: req.body });
@@ -39,10 +41,19 @@ teamsRouter.post('/', requireAuth, requirePermission('team:create'), validate(cr
   } catch (err) { next(err); }
 });
 
+// PATCH /api/v1/teams/:id — update team details
+teamsRouter.patch('/:id', requireAuth, requirePermission('team:update'), validate(updateTeamSchema), async (req: AuthRequest, res, next) => {
+  try {
+    const team = await prisma.team.update({ where: { id: req.params.id }, data: req.body });
+    res.json({ success: true, data: team });
+  } catch (err) { next(err); }
+});
+
 // POST /api/v1/teams/:id/players — add a player to team
-teamsRouter.post('/:id/players', requireAuth, async (req: AuthRequest, res, next) => {
+teamsRouter.post('/:id/players', requireAuth, requirePermission('team:manage_roster'), async (req: AuthRequest, res, next) => {
   try {
     const { playerId, role = 'PLAYER' } = req.body;
+    if (!playerId) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'playerId required' } });
     const member = await prisma.teamMember.upsert({
       where: { teamId_playerId: { teamId: req.params.id, playerId } },
       create: { teamId: req.params.id, playerId, role },
@@ -54,7 +65,7 @@ teamsRouter.post('/:id/players', requireAuth, async (req: AuthRequest, res, next
 });
 
 // DELETE /api/v1/teams/:id/players/:playerId — remove player from team
-teamsRouter.delete('/:id/players/:playerId', requireAuth, async (req: AuthRequest, res, next) => {
+teamsRouter.delete('/:id/players/:playerId', requireAuth, requirePermission('team:manage_roster'), async (req: AuthRequest, res, next) => {
   try {
     await prisma.teamMember.update({
       where: { teamId_playerId: { teamId: req.params.id, playerId: req.params.playerId } },

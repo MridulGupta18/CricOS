@@ -7,7 +7,14 @@ export interface AuthRequest extends Request {
   user?: { id: string; email: string; role: UserRole };
 }
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
+  }
+  console.warn('[CricOS] WARNING: JWT_SECRET not set — using insecure dev secret. Set JWT_SECRET in production!');
+}
+const _JWT_SECRET = JWT_SECRET ?? 'dev-secret-DO-NOT-USE-IN-PRODUCTION-' + Math.random();
 
 // ─── TOKEN VERIFICATION ──────────────────────────────────────
 
@@ -18,7 +25,7 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
   }
   const token = header.slice(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { id: string; email: string; role: UserRole };
+    const payload = jwt.verify(token, _JWT_SECRET) as { id: string; email: string; role: UserRole };
     req.user = payload;
     next();
   } catch {
@@ -31,7 +38,7 @@ export function optionalAuth(req: AuthRequest, _res: Response, next: NextFunctio
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) {
     try {
-      const payload = jwt.verify(header.slice(7), JWT_SECRET) as { id: string; email: string; role: UserRole };
+      const payload = jwt.verify(header.slice(7), _JWT_SECRET) as unknown as { id: string; email: string; role: UserRole };
       req.user = payload;
     } catch { /* no-op — unauthenticated is fine */ }
   }
@@ -98,9 +105,15 @@ export function requireAtLeast(minimum: UserRole) {
 // ─── TOKEN GENERATORS ────────────────────────────────────────
 
 export function generateAccessToken(payload: { id: string; email: string; role: UserRole }) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '15m' });
+  return jwt.sign(payload, _JWT_SECRET, { expiresIn: '15m' });
 }
 
+const _REFRESH_SECRET = (process.env.REFRESH_TOKEN_SECRET ?? _JWT_SECRET) + '_refresh_v1';
+
 export function generateRefreshToken(payload: { id: string }) {
-  return jwt.sign(payload, JWT_SECRET + '_refresh', { expiresIn: '30d' });
+  return jwt.sign(payload, _REFRESH_SECRET, { expiresIn: '30d' });
+}
+
+export function verifyRefreshToken(token: string): { id: string } {
+  return jwt.verify(token, _REFRESH_SECRET) as { id: string };
 }

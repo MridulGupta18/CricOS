@@ -200,6 +200,7 @@ export function assignableRoles(byRole: UserRole): UserRole[] {
 }
 
 // ─── MASTER ACCOUNT ──────────────────────────────────────────
-// The email address of the one master account.
-// Only this account can be promoted to MASTER via bootstrap.
-export const MASTER_EMAIL = 'guptamridul1997@gmail.com';
+// The email of the one master account — loaded from env, never hardcoded.
+// Set MASTER_EMAIL=<your-email> in Railway/production environment variables.
+// Bootstrap via POST /api/v1/admin/bootstrap after first registration.
+export const MASTER_EMAIL = process.env.MASTER_EMAIL ?? '';

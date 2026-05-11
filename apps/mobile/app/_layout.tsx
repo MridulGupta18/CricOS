@@ -8,6 +8,7 @@ import Toast from 'react-native-toast-message';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
 import { useAuthStore } from '@/stores/authStore';
+import { initNetworkListener } from '@/offline/syncWorker';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -62,6 +63,11 @@ function AuthGate() {
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const unsubscribeNetwork = initNetworkListener();
+    return unsubscribeNetwork;
+  }, []);
 
   useEffect(() => {
     Font.loadAsync({

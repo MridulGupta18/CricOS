@@ -31,7 +31,7 @@ searchRouter.get('/', async (req, res, next) => {
         where: {
           OR: [
             { name: { contains: searchTerm, mode: 'insensitive' } },
-            { city: region ? { contains: region, mode: 'insensitive' } : undefined },
+            ...(region ? [{ city: { contains: region, mode: 'insensitive' as const } }] : []),
           ],
         },
         select: { id: true, name: true, role: true, city: true, avatarUrl: true },
@@ -57,7 +57,7 @@ searchRouter.get('/', async (req, res, next) => {
           OR: [
             { name: { contains: searchTerm, mode: 'insensitive' } },
             { shortName: { contains: searchTerm, mode: 'insensitive' } },
-            { city: region ? { contains: region, mode: 'insensitive' } : undefined },
+            ...(region ? [{ city: { contains: region, mode: 'insensitive' as const } }] : []),
           ],
         },
         select: { id: true, name: true, shortName: true, city: true, logoUrl: true },
@@ -85,7 +85,7 @@ searchRouter.get('/', async (req, res, next) => {
             { title: { contains: searchTerm, mode: 'insensitive' } },
             { homeTeam: { name: { contains: searchTerm, mode: 'insensitive' } } },
             { awayTeam: { name: { contains: searchTerm, mode: 'insensitive' } } },
-            { city: region ? { contains: region, mode: 'insensitive' } : undefined },
+            ...(region ? [{ city: { contains: region, mode: 'insensitive' as const } }] : []),
           ],
         },
         select: {
@@ -115,7 +115,7 @@ searchRouter.get('/', async (req, res, next) => {
           isPublic: true,
           OR: [
             { name: { contains: searchTerm, mode: 'insensitive' } },
-            { city: region ? { contains: region, mode: 'insensitive' } : undefined },
+            ...(region ? [{ city: { contains: region, mode: 'insensitive' as const } }] : []),
           ],
         },
         select: { id: true, name: true, slug: true, status: true, city: true, logoUrl: true },

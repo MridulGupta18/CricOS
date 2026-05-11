@@ -14,7 +14,7 @@ export async function syncPendingBalls() {
   isSyncing = true;
 
   try {
-    const pending = getPendingBalls();
+    const pending = await getPendingBalls();
     if (pending.length === 0) return;
 
     console.log(`[Sync] Flushing ${pending.length} offline ball events`);
@@ -31,7 +31,7 @@ export async function syncPendingBalls() {
           extraRuns: ball.extras?.runs ?? 0,
           wicket: ball.wicket ?? null,
         });
-        removePendingBall(ball.clientId);
+        await removePendingBall(ball.clientId);
         useScoringStore.getState().removePendingBall(ball.clientId);
       } catch (err: any) {
         // Permanently failed — remove from queue
@@ -49,7 +49,7 @@ export async function syncPendingBalls() {
 
 // Subscribe to NetInfo — fires immediately + on change
 export function initNetworkListener() {
-  return NetInfo.addEventListener((state) => {
+  return NetInfo.addEventListener((state: any) => {
     const online = state.isConnected === true && state.isInternetReachable !== false;
     useScoringStore.getState().setOnline(online);
     if (online) syncPendingBalls();
