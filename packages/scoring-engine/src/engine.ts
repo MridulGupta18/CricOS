@@ -218,7 +218,14 @@ export function computeInningsState(
     }
 
     // ── Free hit tracking ─────────────────────────────────
-    nextIsFreeHit = extraType === 'NO_BALL';
+    // A no-ball activates a free hit. Illegal deliveries (wides) do NOT consume
+    // it — the free hit carries until the next LEGAL delivery (Law 21.15).
+    if (extraType === 'NO_BALL') {
+      nextIsFreeHit = true;
+    } else if (isLegal) {
+      nextIsFreeHit = false;
+    }
+    // Wides leave nextIsFreeHit unchanged.
 
     // Track current over balls
     overBalls.push(event);

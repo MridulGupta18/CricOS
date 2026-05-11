@@ -9,7 +9,7 @@ import { connectSocket, joinMatchRoom, leaveMatchRoom } from '@/lib/socket';
 import { useQueryClient } from '@tanstack/react-query';
 import { InningsState, BatsmanInnings, BowlerInnings } from '@cricket-os/shared';
 import { formatOvers, generateCommentary } from '@cricket-os/scoring-engine';
-import { useScorecardShare } from '@/components/ScorecardShare';
+import { useScorecardShare, ScorecardShareWrapper } from '@/components/ScorecardShare';
 import { C, F, R, S } from '@/lib/theme';
 
 function resultText(m: any) {
@@ -239,6 +239,49 @@ function OverTimeline({ ballEvents, playerById }: { ballEvents: any[]; playerByI
   );
 }
 
+// ── Over-by-over run chart ─────────────────────────────────────────────────
+function OverRunChart({ ballEvents }: { ballEvents: any[] }) {
+  if (!ballEvents?.length) return null;
+
+  const map: Record<number, { runs: number; wickets: number }> = {};
+  for (const b of ballEvents) {
+    if (!map[b.overNumber]) map[b.overNumber] = { runs: 0, wickets: 0 };
+    map[b.overNumber].runs += (b.runs ?? 0) + (b.extraRuns ?? 0);
+    if (b.isWicket) map[b.overNumber].wickets++;
+  }
+
+  const overs = Object.keys(map).map(Number).sort((a, b) => a - b);
+  if (!overs.length) return null;
+  const maxRuns = Math.max(...overs.map(o => map[o].runs), 1);
+
+  return (
+    <View style={{ marginTop: S.lg }}>
+      <SectionTitle>Run Chart</SectionTitle>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 3, paddingBottom: S.sm, minHeight: 72 }}>
+          {overs.map((o) => {
+            const { runs, wickets } = map[o];
+            const barH = Math.max(6, Math.round((runs / maxRuns) * 52));
+            const barColor = runs >= 16 ? C.orange : runs >= 10 ? C.green : C.primary;
+            return (
+              <View key={o} style={{ alignItems: 'center', width: 26 }}>
+                {wickets > 0 && (
+                  <Text style={{ fontFamily: F.bold, fontSize: 8, color: C.red, marginBottom: 1 }}>
+                    {wickets}W
+                  </Text>
+                )}
+                <Text style={{ fontFamily: F.bold, fontSize: 9, color: barColor, marginBottom: 2 }}>{runs}</Text>
+                <View style={{ width: 18, height: barH, backgroundColor: barColor, borderRadius: 2, opacity: 0.85 }} />
+                <Text style={{ fontFamily: F.reg, fontSize: 8, color: C.textMuted, marginTop: 3 }}>{o + 1}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
 // ── InningsScorecard ───────────────────────────────────────────────────────
 function InningsScorecard({ inningsState, rawInnings, playerById, title }: {
   inningsState: InningsState;
@@ -260,6 +303,7 @@ function InningsScorecard({ inningsState, rawInnings, playerById, title }: {
         <SectionTitle>Bowling</SectionTitle>
         <BowlingTable bowlers={inningsState.bowlers} playerById={playerById} />
       </View>
+      <OverRunChart ballEvents={rawInnings?.ballEvents ?? []} />
     </View>
   );
 }
@@ -319,7 +363,7 @@ export function MatchDetailScreen() {
     return map;
   }, [match, scData]);
   const playerById = (id: string) => playerMap.get(id) ?? id?.slice(0, 8) ?? '?';
-  const { shareAsText } = useScorecardShare({ match: match ?? {}, inningsStates, playerById });
+  const { shotRef, shareAsImage } = useScorecardShare({ match: match ?? {}, inningsStates, playerById });
 
   if (!match && ml) return (
     <View style={{ flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' }}>
@@ -343,9 +387,22 @@ export function MatchDetailScreen() {
   const extras2 = inn2State?.extras.total ?? 0;
   const allBalls = [...(rawInn1?.ballEvents ?? []), ...(rawInn2?.ballEvents ?? [])];
 
+  // 2nd innings chase info
+  const target      = inn1State ? inn1State.totalRuns + 1 : null;
+  const chasing     = inn2State && !inn2State.isComplete && target != null;
+  const inn2Runs    = inn2State?.totalRuns ?? 0;
+  const inn2Wkts    = inn2State?.totalWickets ?? 0;
+  const inn2Overs   = inn2State ? Math.floor(inn2State.totalOvers) + (inn2State.currentOver.legalBallsDelivered / 6) : 0;
+  const maxOvers    = match.overs ?? 20;
+  const needed      = chasing ? Math.max(0, target! - inn2Runs) : null;
+  const ballsLeft   = chasing ? Math.max(0, maxOvers * 6 - (inn2State!.currentOver.overNumber * 6 + inn2State!.currentOver.legalBallsDelivered)) : null;
+  const inn2CRR     = inn2Overs > 0 ? (inn2Runs / inn2Overs).toFixed(2) : null;
+  const inn2RRR     = (ballsLeft != null && ballsLeft > 0 && needed != null) ? ((needed / ballsLeft) * 6).toFixed(2) : null;
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <ScorecardShareWrapper shotRef={shotRef}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
@@ -362,7 +419,7 @@ export function MatchDetailScreen() {
             </Text>
             {match.league && <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted }}>{match.league.name}</Text>}
           </View>
-          <Pressable onPress={shareAsText} hitSlop={12}>
+          <Pressable onPress={shareAsImage} hitSlop={12}>
             <Text style={{ fontFamily: F.reg, fontSize: 18, color: C.textSub }}>⋯</Text>
           </Pressable>
         </View>
@@ -416,6 +473,33 @@ export function MatchDetailScreen() {
             </View>
           )}
         </View>
+
+        {/* ── Chase info bar (2nd innings live) ── */}
+        {chasing && (
+          <View style={{ backgroundColor: '#0F1A2E', paddingHorizontal: S.xl, paddingVertical: S.md, borderBottomWidth: 1, borderBottomColor: C.border, flexDirection: 'row', gap: S.xl, alignItems: 'center', flexWrap: 'wrap' }}>
+            <View>
+              <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>Need</Text>
+              <Text style={{ fontFamily: F.bold, fontSize: 20, color: needed! <= 30 ? C.red : C.orange }}>{needed}</Text>
+              <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>off {ballsLeft} balls</Text>
+            </View>
+            <View>
+              <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>Target</Text>
+              <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.text }}>{target}</Text>
+            </View>
+            {inn2CRR && (
+              <View>
+                <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>CRR</Text>
+                <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.textSub }}>{inn2CRR}</Text>
+              </View>
+            )}
+            {inn2RRR && (
+              <View>
+                <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>RRR</Text>
+                <Text style={{ fontFamily: F.bold, fontSize: 18, color: parseFloat(inn2RRR) > 12 ? C.red : parseFloat(inn2RRR) > 9 ? C.orange : C.green }}>{inn2RRR}</Text>
+              </View>
+            )}
+          </View>
+        )}
 
         {(inn1 || inn2) && (
           <View style={{ paddingHorizontal: S.xl, paddingTop: S.md }}>
@@ -532,6 +616,7 @@ export function MatchDetailScreen() {
           )}
         </View>
       </ScrollView>
+      </ScorecardShareWrapper>
 
       {/* Bottom CTA */}
       <View style={{ paddingHorizontal: S.xl, paddingVertical: S.md, paddingBottom: insets.bottom + S.sm, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.card }}>
@@ -546,9 +631,9 @@ export function MatchDetailScreen() {
             <Text style={{ fontFamily: F.bold, fontSize: 15, color: '#fff' }}>◎ Start Scoring</Text>
           </Pressable>
         ) : (
-          <Pressable onPress={() => Share.share({ message: `${match.homeTeam?.name} vs ${match.awayTeam?.name} — CricOS` })}
+          <Pressable onPress={shareAsImage}
             style={({ pressed }) => ({ backgroundColor: C.card2, borderRadius: R.lg, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: C.border, opacity: pressed ? 0.85 : 1 })}>
-            <Text style={{ fontFamily: F.semi, fontSize: 14, color: C.text }}>Share Match 🔗</Text>
+            <Text style={{ fontFamily: F.semi, fontSize: 14, color: C.text }}>Share Scorecard</Text>
           </Pressable>
         )}
       </View>

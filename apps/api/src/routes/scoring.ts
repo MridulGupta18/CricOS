@@ -204,14 +204,70 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
         },
       });
 
-      // Auto-close match to INNINGS_BREAK / COMPLETED
+      // Auto-close match — handle normal completion, tie → super over, and super over result
       if (inningsNowComplete) {
         const reason = newWickets >= 10 ? 'ALL_OUT' : 'OVERS_COMPLETE';
-        const newMatchStatus = innings.inningsNumber === 1 ? 'INNINGS_BREAK' : 'COMPLETED';
-        await tx.match.update({
-          where: { id: innings.matchId },
-          data:  { status: newMatchStatus },
-        });
+        const newTotalRuns = innings.totalRuns + runs + extraRuns;
+        let newMatchStatus: 'INNINGS_BREAK' | 'COMPLETED' | 'SUPER_OVER' = 'COMPLETED';
+
+        if (innings.inningsNumber === 1) {
+          newMatchStatus = 'INNINGS_BREAK';
+
+        } else if (innings.inningsNumber === 2) {
+          // Check if scores are tied — auto-start super over
+          const inn1 = await tx.innings.findFirst({
+            where: { matchId: innings.matchId, inningsNumber: 1 },
+            select: { totalRuns: true },
+          });
+          if (inn1 && newTotalRuns === inn1.totalRuns) {
+            newMatchStatus = 'SUPER_OVER';
+            // Team that batted 2nd in main match bats first in super over
+            await tx.innings.create({
+              data: {
+                matchId: innings.matchId,
+                inningsNumber: 3,
+                battingTeamId: innings.battingTeamId,
+                bowlingTeamId: innings.bowlingTeamId,
+              },
+            });
+            await tx.match.update({ where: { id: innings.matchId }, data: { overs: 1 } });
+            io.to(`match:${innings.matchId}`).emit('super_over:started', { innings: 3 });
+          }
+
+        } else if (innings.inningsNumber === 3) {
+          // Super over innings 1 complete — auto-create innings 4 for the other team
+          newMatchStatus = 'SUPER_OVER';
+          await tx.innings.create({
+            data: {
+              matchId: innings.matchId,
+              inningsNumber: 4,
+              battingTeamId: innings.bowlingTeamId,  // teams swap
+              bowlingTeamId: innings.battingTeamId,
+            },
+          });
+
+        } else if (innings.inningsNumber === 4) {
+          // Super over complete — determine winner by comparing innings 3 vs 4
+          const inn3 = await tx.innings.findFirst({
+            where: { matchId: innings.matchId, inningsNumber: 3 },
+            select: { totalRuns: true, battingTeamId: true },
+          });
+          if (inn3) {
+            const winnerId = newTotalRuns > inn3.totalRuns
+              ? innings.battingTeamId
+              : newTotalRuns < inn3.totalRuns
+              ? inn3.battingTeamId
+              : null; // another tie (extremely rare — declared no-result)
+            if (winnerId) {
+              await tx.match.update({
+                where: { id: innings.matchId },
+                data: { winnerId, resultType: 'WIN' },
+              });
+            }
+          }
+        }
+
+        await tx.match.update({ where: { id: innings.matchId }, data: { status: newMatchStatus } });
         io.to(`match:${innings.matchId}`).emit('innings:complete', {
           inningsId: innings.id,
           reason,

@@ -89,6 +89,7 @@ export interface InningsState {
   bowlingTeamId: string;
   totalRuns: number;
   totalWickets: number;
+  /** Cricket notation — NOT a decimal. 18 overs + 3 balls = 18.3, NOT 18.5. Use formatOvers() for display. */
   totalOvers: number;
   extras: ExtrasBreakdown;
   currentOver: CurrentOverState;
