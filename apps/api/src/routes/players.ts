@@ -151,9 +151,12 @@ playersRouter.get('/:id/stats', async (req, res, next) => {
       for (const b of inn.ballEvents) {
         const isWide = b.extraType === 'WIDE';
         if (!isWide) { innRuns += b.runs; innBalls++; }
-        if (b.runs === 4 && b.isBoundary) batFours++;
-        if (b.runs === 6 && b.isSix) batSixes++;
-        if (b.wicket) isOut = true;
+        // Recompute from runs — don't trust stored flags which may predate bug fix
+        const isBatHitBall = !b.extraType || b.extraType === 'NO_BALL';
+        if (b.runs === 4 && isBatHitBall) batFours++;
+        if (b.runs === 6 && isBatHitBall) batSixes++;
+        // RETIRED_HURT is not a dismissal (Law 26/37)
+        if (b.wicket && b.wicket.wicketType !== 'RETIRED_HURT') isOut = true;
       }
       batRuns += innRuns; batBalls += innBalls;
       if (!isOut) batNotOuts++;

@@ -135,8 +135,11 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
     const overNumber  = currentState.currentOver.overNumber;
     const ballNumber  = currentState.currentOver.legalBallsDelivered;
     const rawBallNumber = innings.ballEvents.length;
-    const isBoundary  = runs === 4 && !extraType;
-    const isSix       = runs === 6 && !extraType;
+    // A four or six hit off a no-ball still counts as a batting boundary.
+    // Wides, byes, leg-byes are not bat-hit boundaries.
+    const isBatHit    = !extraType || extraType === 'NO_BALL';
+    const isBoundary  = runs === 4 && isBatHit;
+    const isSix       = runs === 6 && isBatHit;
 
     // Determine innings completion after this ball
     const newWickets   = currentState.totalWickets + (wicket ? 1 : 0);
@@ -445,10 +448,15 @@ async function recomputeCareerStatsForMatch(matchId: string): Promise<void> {
         if (b.extraType !== 'WIDE') batByInnings[key].balls++;
         if (!b.extraType || (b.extraType !== 'BYE' && b.extraType !== 'LEG_BYE' && b.extraType !== 'WIDE')) {
           batByInnings[key].runs += b.runs;
-          if (b.runs === 4 && b.isBoundary) batByInnings[key].fours++;
-          if (b.runs === 6 && b.isSix) batByInnings[key].sixes++;
+          // Recompute from runs value — don't trust stored flags which may predate this fix
+          const isBatHitBall = !b.extraType || b.extraType === 'NO_BALL';
+          if (b.runs === 4 && isBatHitBall) batByInnings[key].fours++;
+          if (b.runs === 6 && isBatHitBall) batByInnings[key].sixes++;
         }
-        if (b.wicket && b.wicket.outBatsmanId === playerId) batByInnings[key].isOut = true;
+        // RETIRED_HURT is not a dismissal (Law 26/37) — do not mark as out
+        if (b.wicket && b.wicket.outBatsmanId === playerId && b.wicket.wicketType !== 'RETIRED_HURT') {
+          batByInnings[key].isOut = true;
+        }
       }
 
       const batInningsList = Object.values(batByInnings);

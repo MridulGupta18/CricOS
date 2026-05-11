@@ -116,47 +116,57 @@ export function computeInningsState(
 
     // ── Wicket ────────────────────────────────────────────
     if (event.wicket) {
-      // On a free hit, only certain wicket types are allowed (run-out etc.)
-      // The API enforces this; engine just records it.
-      totalWickets++;
-      batsman.isOut   = true;
-      batsman.isNotOut = false;
-      batsman.wicket  = event.wicket;
+      batsman.wicket = event.wicket;
+      const isRetiredHurt = event.wicket.type === 'RETIRED_HURT';
 
-      if (BOWLER_CREDITED_WICKETS.includes(event.wicket.type as any)) {
-        bowler.wickets++;
+      if (isRetiredHurt) {
+        // Law 26/37: Retired Hurt is NOT a dismissal.
+        // Batsman leaves the field but remains not-out; wicket count does not increase.
+        batsman.isRetiredHurt = true;
+        // No bowler credit, no fall-of-wicket entry.
+      } else {
+        // Actual dismissal — increment wickets and record fall-of-wicket.
+        totalWickets++;
+        batsman.isOut    = true;
+        batsman.isNotOut = false;
+
+        if (BOWLER_CREDITED_WICKETS.includes(event.wicket.type as any)) {
+          bowler.wickets++;
+        }
+
+        fallOfWickets.push({
+          wicketNumber: totalWickets,
+          runs:  totalRuns,
+          overs: completedOvers + currentBallInOver / 10,
+          playerId: event.wicket.outBatsmanId,
+        });
       }
 
-      fallOfWickets.push({
-        wicketNumber: totalWickets,
-        runs:  totalRuns,
-        overs: completedOvers + currentBallInOver / 10,
-        playerId: event.wicket.outBatsmanId,
-      });
-
-      // Runs completed before the dismissal still count for strike rotation.
-      // Apply rotation FIRST (odd runs = batsmen crossed), THEN nullify out batsman.
+      // Runs before dismissal count for rotation (apply BEFORE removing batsman).
       if (event.runs % 2 !== 0) {
         [strikerId, nonStrikerId] = [nonStrikerId, strikerId];
       }
-      if (event.wicket.outBatsmanId === strikerId) {
-        strikerId = null; // new batsman will set this on their first ball
-      } else {
-        nonStrikerId = null; // non-striker was run out (or crossed and dismissed)
-      }
 
-      // Archive current partnership before resetting
-      if ((partnershipRuns > 0 || partnershipBalls > 0) && strikerId !== null) {
+      // Archive partnership NOW — while both batsmanIds are still valid —
+      // before we nullify the outgoing batsman's position below.
+      if (partnershipRuns > 0 || partnershipBalls > 0) {
         partnershipHistory.push({
-          batsmanId1: strikerId ?? '',
+          batsmanId1: strikerId    ?? '',
           batsmanId2: nonStrikerId ?? '',
-          runs: partnershipRuns,
+          runs:  partnershipRuns,
           balls: partnershipBalls,
         });
       }
       partnershipRuns  = 0;
       partnershipBalls = 0;
       partnershipStart = totalRuns;
+
+      // Nullify outgoing batsman's end so the incoming batsman can take their spot.
+      if (event.wicket.outBatsmanId === strikerId) {
+        strikerId = null;
+      } else {
+        nonStrikerId = null;
+      }
     }
 
     // ── Legal ball counting and over management ───────────
@@ -306,7 +316,7 @@ export function validateBallEvent(
   // Bowler overs limit (limited-overs formats only; TEST/CUSTOM have no cap)
   const isLimitedOvers = maxOvers > 0 && matchFormat !== 'TEST' && matchFormat !== 'CUSTOM';
   if (isLimitedOvers) {
-    const maxBowlerOvers = Math.round(maxOvers * BOWLER_MAX_OVERS_RATIO);
+    const maxBowlerOvers = Math.floor(maxOvers * BOWLER_MAX_OVERS_RATIO);
     const bowlerDone     = bowlerOverCounts[event.bowlerId!] ?? 0;
     if (bowlerDone >= maxBowlerOvers) {
       return `Bowler has already bowled their maximum ${maxBowlerOvers} overs`;
@@ -379,7 +389,7 @@ export function isPowerplay(overNumber: number, format: MatchFormat): boolean {
 }
 
 export function maxBowlerOvers(totalOvers: number): number {
-  return Math.round(totalOvers * BOWLER_MAX_OVERS_RATIO);
+  return Math.floor(totalOvers * BOWLER_MAX_OVERS_RATIO);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -449,7 +459,7 @@ export function generateCommentary(
 // ──────────────────────────────────────────────────────────────
 
 function initBatsman(playerId: string): BatsmanInnings {
-  return { playerId, runs: 0, ballsFaced: 0, fours: 0, sixes: 0, strikeRate: 0, isOnStrike: false, isOut: false, isNotOut: true };
+  return { playerId, runs: 0, ballsFaced: 0, fours: 0, sixes: 0, strikeRate: 0, isOnStrike: false, isOut: false, isNotOut: true, isRetiredHurt: false };
 }
 
 function initBowler(playerId: string): BowlerInnings {

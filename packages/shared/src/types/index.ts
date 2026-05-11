@@ -131,8 +131,9 @@ export interface BatsmanInnings {
   strikeRate: number;
   isOnStrike: boolean;
   isOut: boolean;
-  wicket?: WicketRecord;
   isNotOut: boolean;
+  isRetiredHurt: boolean;
+  wicket?: WicketRecord;
 }
 
 export interface BowlerInnings {
