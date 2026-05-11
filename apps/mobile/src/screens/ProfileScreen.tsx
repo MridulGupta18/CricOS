@@ -38,11 +38,11 @@ function StatRow({ stats }: { stats: { value: string | number; label: string }[]
 }
 
 const MENU_ITEMS = [
-  { icon: '◉', label: 'My Stats',    sub: 'Career batting & bowling' },
-  { icon: '◈', label: 'My Leagues',  sub: 'Leagues you manage' },
-  { icon: '◷', label: 'My Matches',  sub: 'Match history & scorecards' },
-  { icon: '◆', label: 'Revenue',     sub: 'Payments & invoices' },
-  { icon: '⚙', label: 'Settings',    sub: 'Account, notifications' },
+  { icon: '◉', label: 'My Stats',    sub: 'Career batting & bowling',  route: null        },
+  { icon: '◈', label: 'My Leagues',  sub: 'Leagues you manage',        route: '/(tabs)/leagues' },
+  { icon: '◷', label: 'My Matches',  sub: 'Match history & scorecards',route: '/(tabs)/matches' },
+  { icon: '👥', label: 'My Teams',   sub: 'Teams you manage',          route: '/team/create' },
+  { icon: '◆', label: 'Register Player', sub: 'Add a player to CricOS', route: '/players/create' },
 ];
 
 export function ProfileScreen() {
@@ -101,19 +101,20 @@ export function ProfileScreen() {
           </View>
         )}
 
-        {/* Menu items — matches design exactly */}
+        {/* Menu items */}
         <View style={{ paddingHorizontal: S.xl, gap: S.sm }}>
           {MENU_ITEMS.map((item, i) => (
             <Pressable key={i}
+              onPress={() => item.route ? router.push(item.route as any) : undefined}
               style={({ pressed }) => ({
                 backgroundColor: pressed ? C.cardHover : C.card,
                 borderWidth: 1, borderColor: C.border,
                 borderRadius: R.lg, padding: S.lg,
                 flexDirection: 'row', alignItems: 'center', gap: S.lg,
-                cursor: 'pointer',
+                opacity: item.route ? 1 : 0.5,
               })}>
               <View style={{ width: 44, height: 44, borderRadius: R.md, backgroundColor: C.card2, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Text style={{ fontSize: 20, color: C.textSub }}>{item.icon}</Text>
+                <Text style={{ fontSize: 20 }}>{item.icon}</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontFamily: F.bold, fontSize: 14, color: C.text }}>{item.label}</Text>

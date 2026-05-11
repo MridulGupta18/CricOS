@@ -105,9 +105,15 @@ export function LeaguesListScreen() {
       <View style={{ paddingTop: insets.top + 16, paddingHorizontal: S.xl, paddingBottom: S.sm, borderBottomWidth: 1, borderBottomColor: C.border }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: S.md }}>
           <Text style={{ fontFamily: F.bold, fontSize: 22, color: C.text }}>Leagues</Text>
-          <Pressable onPress={() => router.push('/search')} style={{ padding: S.sm }}>
-            <Text style={{ fontSize: 18, color: C.textSub }}>⌕</Text>
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'center' }}>
+            <Pressable onPress={() => router.push('/league/create')}
+              style={{ backgroundColor: C.primary, borderRadius: R.md, paddingHorizontal: S.md, paddingVertical: 7 }}>
+              <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>+ Create</Text>
+            </Pressable>
+            <Pressable onPress={() => router.push('/search')} style={{ padding: S.sm }}>
+              <Text style={{ fontSize: 18, color: C.textSub }}>⌕</Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* Format filter tabs */}
@@ -122,7 +128,7 @@ export function LeaguesListScreen() {
         ListHeaderComponent={
           <View style={{ paddingTop: S.sm, paddingBottom: S.xs }}>
             <Text style={{ fontFamily: F.semi, fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.7 }}>
-              Near <Text style={{ color: C.primaryLight }}>Calgary</Text>
+              All Leagues
             </Text>
           </View>
         }
@@ -134,6 +140,10 @@ export function LeaguesListScreen() {
             <Text style={{ fontFamily: F.reg, fontSize: 14, color: C.textSub, textAlign: 'center', marginBottom: S.xxl }}>
               Create a league to manage teams, fixtures, standings and results.
             </Text>
+            <Pressable onPress={() => router.push('/league/create')}
+              style={({ pressed }) => ({ backgroundColor: C.primary, borderRadius: R.lg, paddingHorizontal: S.xxl, paddingVertical: 14, opacity: pressed ? 0.85 : 1 })}>
+              <Text style={{ fontFamily: F.bold, fontSize: 15, color: '#fff' }}>+ Create League</Text>
+            </Pressable>
           </View>
         }
         renderItem={({ item }) => (

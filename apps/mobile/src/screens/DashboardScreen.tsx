@@ -117,7 +117,6 @@ function LeagueChip({ league, onPress }: { league: any; onPress: () => void }) {
 export function DashboardScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [location] = useState('Calgary');
   const dotAnim = useRef(new Animated.Value(1)).current;
 
   const { data: md, isLoading: ml, refetch: rm } = useQuery({
@@ -165,10 +164,10 @@ export function DashboardScreen() {
               <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>{greet}</Text>
               <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.text, letterSpacing: -0.4 }}>Explore Cricket</Text>
             </View>
-            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.card2, borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }}>
-              <Text style={{ fontSize: 12 }}>📍</Text>
-              <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textSub }}>{location}</Text>
-              <Text style={{ fontSize: 10, color: C.textMuted }}>▾</Text>
+            <Pressable onPress={() => router.push('/league/create')}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.primary + '22', borderWidth: 1, borderColor: C.primary + '44', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }}>
+              <Text style={{ fontSize: 12 }}>🏆</Text>
+              <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.primaryLight }}>New League</Text>
             </Pressable>
           </View>
           <Pressable onPress={() => router.push('/(tabs)/profile')}
@@ -193,11 +192,11 @@ export function DashboardScreen() {
         <View style={{ marginHorizontal: S.xl, marginBottom: S.xxl }}>
           <View style={{ backgroundColor: GRAD_BG, borderRadius: R.xl, borderWidth: 1, borderColor: C.borderLt, padding: S.lg, overflow: 'hidden' }}>
             <View style={{ position: 'absolute', top: -20, right: -20, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(99,102,241,0.12)' }} />
-            <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Near {location}</Text>
+            <Text style={{ fontFamily: F.reg, fontSize: 11, color: C.textMuted, marginBottom: 4 }}>CricOS Live</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, marginBottom: S.md }}>
               {live.length > 0 && <Animated.View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: C.red, opacity: dotAnim }} />}
               <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.text }}>
-                {live.length > 0 ? `${live.length} match${live.length !== 1 ? 'es' : ''} live` : 'Cricket in Calgary'}
+                {live.length > 0 ? `${live.length} match${live.length !== 1 ? 'es' : ''} live` : 'Welcome to CricOS'}
               </Text>
             </View>
             <View style={{ flexDirection: 'row', gap: S.xxl }}>

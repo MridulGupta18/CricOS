@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
+import { useAuthStore } from '@/stores/authStore';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -26,6 +27,39 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
 
+// Redirects unauthenticated users to onboarding and authenticated users away from it.
+function AuthGate() {
+  const router = useRouter();
+  const segments = useSegments();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Wait for zustand-persist to finish reading from AsyncStorage
+  useEffect(() => {
+    if (useAuthStore.persist.hasHydrated()) {
+      setHydrated(true);
+    } else {
+      const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
+      return unsub;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const inTabs    = segments[0] === '(tabs)';
+    const inOnboard = segments[0] === 'onboarding';
+    const inAuth    = segments[0] === 'auth';
+
+    if (!isAuthenticated && inTabs) {
+      router.replace('/onboarding');
+    } else if (isAuthenticated && (inOnboard || inAuth)) {
+      router.replace('/(tabs)');
+    }
+  }, [isAuthenticated, segments, hydrated]);
+
+  return null;
+}
+
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
 
@@ -36,14 +70,8 @@ export default function RootLayout() {
       Inter_600SemiBold: require('../assets/fonts/Inter_600SemiBold.ttf'),
       Inter_700Bold:    require('../assets/fonts/Inter_700Bold.ttf'),
     })
-      .then(() => {
-        console.log('[CricOS] Fonts loaded');
-        setReady(true);
-      })
-      .catch((e) => {
-        console.warn('[CricOS] Font load failed, using system fonts:', e?.message);
-        setReady(true);
-      });
+      .then(() => { setReady(true); })
+      .catch(() => { setReady(true); });
   }, []);
 
   useEffect(() => {
@@ -57,16 +85,21 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <BottomSheetModalProvider>
           <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="match/[id]/index" options={{ presentation: 'card' }} />
             <Stack.Screen name="match/[id]/score" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen name="match/new" options={{ presentation: 'modal' }} />
             <Stack.Screen name="league/[slug]" options={{ presentation: 'card' }} />
+            <Stack.Screen name="league/create" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="team/create" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="players/create" options={{ presentation: 'modal' }} />
             <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
             <Stack.Screen name="auth/register" options={{ presentation: 'modal' }} />
             <Stack.Screen name="search" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen name="player/[id]" options={{ presentation: 'card' }} />
           </Stack>
+          <AuthGate />
           <StatusBar style="auto" />
           <Toast />
         </BottomSheetModalProvider>

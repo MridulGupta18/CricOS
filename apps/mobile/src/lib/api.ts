@@ -61,18 +61,21 @@ export const scoringApi = {
 };
 
 export const leaguesApi = {
-  list: (params?: Record<string, string>) => apiClient.get('/leagues', { params }),
-  get: (idOrSlug: string) => apiClient.get(`/leagues/${idOrSlug}`),
-  create: (data: unknown) => apiClient.post('/leagues', data),
-  getStandings: (id: string) => apiClient.get(`/leagues/${id}/standings`),
+  list:         (params?: Record<string, string>) => apiClient.get('/leagues', { params }),
+  get:          (idOrSlug: string)  => apiClient.get(`/leagues/${idOrSlug}`),
+  create:       (data: unknown)     => apiClient.post('/leagues', data),
+  update:       (id: string, data: unknown) => apiClient.patch(`/leagues/${id}`, data),
+  getStandings: (id: string)        => apiClient.get(`/leagues/${id}/standings`),
   registerTeam: (id: string, teamId: string) =>
     apiClient.post(`/leagues/${id}/teams`, { teamId }),
 };
 
 export const teamsApi = {
-  get: (id: string) => apiClient.get(`/teams/${id}`),
-  create: (data: unknown) => apiClient.post('/teams', data),
+  get:       (id: string)          => apiClient.get(`/teams/${id}`),
+  create:    (data: unknown)       => apiClient.post('/teams', data),
   addPlayer: (id: string, data: unknown) => apiClient.post(`/teams/${id}/players`, data),
+  removePlayer: (id: string, playerId: string) => apiClient.delete(`/teams/${id}/players/${playerId}`),
+  search:    (q: string)           => apiClient.get('/search', { params: { q, type: 'TEAM', limit: '20' } }),
 };
 
 export const playersApi = {
