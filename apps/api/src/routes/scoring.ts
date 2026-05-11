@@ -204,50 +204,46 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
         },
       });
 
-      // Auto-close match — handle normal completion, tie → super over, and super over result
+      // Auto-close match on innings completion
       if (inningsNowComplete) {
         const reason = newWickets >= 10 ? 'ALL_OUT' : 'OVERS_COMPLETE';
         const newTotalRuns = innings.totalRuns + runs + extraRuns;
         let newMatchStatus: 'INNINGS_BREAK' | 'COMPLETED' | 'SUPER_OVER' = 'COMPLETED';
+        let isTied = false;
 
         if (innings.inningsNumber === 1) {
           newMatchStatus = 'INNINGS_BREAK';
 
         } else if (innings.inningsNumber === 2) {
-          // Check if scores are tied — auto-start super over
+          // Check for tie — set COMPLETED with TIE result and let the scorer decide
+          // whether to split points or proceed to a super over (via the /super-over endpoint).
           const inn1 = await tx.innings.findFirst({
             where: { matchId: innings.matchId, inningsNumber: 1 },
             select: { totalRuns: true },
           });
           if (inn1 && newTotalRuns === inn1.totalRuns) {
-            newMatchStatus = 'SUPER_OVER';
-            // Team that batted 2nd in main match bats first in super over
-            await tx.innings.create({
-              data: {
-                matchId: innings.matchId,
-                inningsNumber: 3,
-                battingTeamId: innings.battingTeamId,
-                bowlingTeamId: innings.bowlingTeamId,
-              },
+            isTied = true;
+            await tx.match.update({
+              where: { id: innings.matchId },
+              data: { resultType: 'TIE' },
             });
-            await tx.match.update({ where: { id: innings.matchId }, data: { overs: 1 } });
-            io.to(`match:${innings.matchId}`).emit('super_over:started', { innings: 3 });
           }
+          newMatchStatus = 'COMPLETED';
 
         } else if (innings.inningsNumber === 3) {
-          // Super over innings 1 complete — auto-create innings 4 for the other team
+          // Super over innings 1 complete — auto-create innings 4 (teams swap; no scorer choice needed)
           newMatchStatus = 'SUPER_OVER';
           await tx.innings.create({
             data: {
               matchId: innings.matchId,
               inningsNumber: 4,
-              battingTeamId: innings.bowlingTeamId,  // teams swap
+              battingTeamId: innings.bowlingTeamId,
               bowlingTeamId: innings.battingTeamId,
             },
           });
 
         } else if (innings.inningsNumber === 4) {
-          // Super over complete — determine winner by comparing innings 3 vs 4
+          // Super over complete — determine winner by comparing super over innings
           const inn3 = await tx.innings.findFirst({
             where: { matchId: innings.matchId, inningsNumber: 3 },
             select: { totalRuns: true, battingTeamId: true },
@@ -257,14 +253,15 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
               ? innings.battingTeamId
               : newTotalRuns < inn3.totalRuns
               ? inn3.battingTeamId
-              : null; // another tie (extremely rare — declared no-result)
-            if (winnerId) {
-              await tx.match.update({
-                where: { id: innings.matchId },
-                data: { winnerId, resultType: 'WIN' },
-              });
-            }
+              : null;
+            await tx.match.update({
+              where: { id: innings.matchId },
+              data: winnerId
+                ? { winnerId, resultType: 'WIN' }
+                : { resultType: 'TIE' },   // second super over tie → points split
+            });
           }
+          newMatchStatus = 'COMPLETED';
         }
 
         await tx.match.update({ where: { id: innings.matchId }, data: { status: newMatchStatus } });
@@ -272,6 +269,7 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
           inningsId: innings.id,
           reason,
           newMatchStatus,
+          isTied,   // scorer UI uses this to show the tie-decision popup
         });
       }
 

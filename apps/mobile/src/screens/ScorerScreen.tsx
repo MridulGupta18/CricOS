@@ -56,12 +56,44 @@ export function ScorerScreen({ matchId }: Props) {
   useEffect(() => {
     const socket = connectSocket(accessToken ?? undefined);
     joinMatchRoom(matchId);
+
     const onBallScored = () => queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] });
+
+    const onInningsComplete = (data: { isTied?: boolean; newMatchStatus?: string }) => {
+      queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] });
+      // When a regular innings ends in a tie, ask the scorer how to proceed
+      if (data?.isTied) {
+        Alert.alert(
+          'Match Tied!',
+          'Both teams are level. How should the match end?',
+          [
+            {
+              text: 'Points Split (Tie)',
+              style: 'cancel',
+              // Match is already set to COMPLETED/TIE on the backend — nothing more to do
+            },
+            {
+              text: 'Super Over',
+              onPress: async () => {
+                try {
+                  await scoringApi.startSuperOver(matchId);
+                  queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] });
+                } catch {
+                  Alert.alert('Error', 'Could not start super over. Try again.');
+                }
+              },
+            },
+          ],
+          { cancelable: false }
+        );
+      }
+    };
+
     socket.on('ball:scored', onBallScored);
-    socket.on('innings:complete', onBallScored);
+    socket.on('innings:complete', onInningsComplete);
     return () => {
       socket.off('ball:scored', onBallScored);
-      socket.off('innings:complete', onBallScored);
+      socket.off('innings:complete', onInningsComplete);
       leaveMatchRoom(matchId);
     };
   }, [matchId, accessToken]);

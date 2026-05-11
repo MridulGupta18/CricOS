@@ -58,6 +58,7 @@ export const scoringApi = {
   undoBall: (ballId: string) => apiClient.delete(`/scoring/ball/${ballId}`),
   getInnings: (id: string) => apiClient.get(`/scoring/innings/${id}`),
   getScorecard: (matchId: string) => apiClient.get(`/scoring/matches/${matchId}/scorecard`),
+  startSuperOver: (matchId: string) => apiClient.post(`/scoring/matches/${matchId}/super-over`, {}),
 };
 
 export const leaguesApi = {
