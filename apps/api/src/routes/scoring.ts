@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { prisma } from '@cricket-os/db';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import { computeInningsState, validateBallEvent, calculateDLSTarget } from '@cricket-os/scoring-engine';
 import { io } from '../index';
@@ -11,7 +11,7 @@ export const scoringRouter = Router();
 
 // ─── INNINGS ────────────────────────────────────────────────
 
-scoringRouter.post('/matches/:matchId/innings', requireAuth, async (req: AuthRequest, res, next) => {
+scoringRouter.post('/matches/:matchId/innings', requireAuth, requirePermission('match:start_innings'), async (req: AuthRequest, res, next) => {
   try {
     const { battingTeamId, bowlingTeamId, inningsNumber } = req.body;
 
@@ -72,7 +72,7 @@ const ballEventSchema = z.object({
   }).optional().nullable(),
 });
 
-scoringRouter.post('/ball', requireAuth, validate(ballEventSchema), async (req: AuthRequest, res, next) => {
+scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), validate(ballEventSchema), async (req: AuthRequest, res, next) => {
   try {
     const { clientId, inningsId, batsmanId, bowlerId, runs, extraType, extraRuns, wicket } = req.body;
 

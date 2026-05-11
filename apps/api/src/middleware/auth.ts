@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { UserRole } from '@cricket-os/shared';
+import { can, atLeast, Action } from '../access-control';
 
 export interface AuthRequest extends Request {
   user?: { id: string; email: string; role: UserRole };
@@ -8,12 +9,13 @@ export interface AuthRequest extends Request {
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production';
 
+// ─── TOKEN VERIFICATION ──────────────────────────────────────
+
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No token provided' } });
   }
-
   const token = header.slice(7);
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { id: string; email: string; role: UserRole };
@@ -24,6 +26,48 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
   }
 }
 
+// Optional auth — attaches user if token present, but doesn't block unauthenticated requests
+export function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (header?.startsWith('Bearer ')) {
+    try {
+      const payload = jwt.verify(header.slice(7), JWT_SECRET) as { id: string; email: string; role: UserRole };
+      req.user = payload;
+    } catch { /* no-op — unauthenticated is fine */ }
+  }
+  next();
+}
+
+// ─── PERMISSION GUARDS ───────────────────────────────────────
+
+/**
+ * Requires the caller to be authenticated AND hold a specific permission
+ * as defined in access-control.ts.
+ *
+ * Usage: router.patch('/leagues/:id', requireAuth, requirePermission('league:update'), handler)
+ */
+export function requirePermission(action: Action) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    }
+    if (!can(req.user.role, action)) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: `Your role (${req.user.role}) does not have permission to perform: ${action}`,
+        },
+      });
+    }
+    next();
+  };
+}
+
+/**
+ * Requires the caller's role to be at least `minimum` in the hierarchy.
+ * MASTER > ADMIN > ORGANIZER > SCORER > PLAYER > VIEWER
+ */
 export function requireRole(...roles: UserRole[]) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } });
@@ -33,6 +77,25 @@ export function requireRole(...roles: UserRole[]) {
     next();
   };
 }
+
+/**
+ * Requires the caller to be at least `minimum` role level.
+ * E.g. requireAtLeast('ORGANIZER') allows ORGANIZER, ADMIN, MASTER.
+ */
+export function requireAtLeast(minimum: UserRole) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } });
+    if (!atLeast(req.user.role, minimum)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: `Requires at least ${minimum} role` },
+      });
+    }
+    next();
+  };
+}
+
+// ─── TOKEN GENERATORS ────────────────────────────────────────
 
 export function generateAccessToken(payload: { id: string; email: string; role: UserRole }) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '15m' });

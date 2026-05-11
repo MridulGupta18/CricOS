@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '@cricket-os/db';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 
 export const matchesRouter = Router();
@@ -117,8 +117,8 @@ matchesRouter.get('/public/:shareToken', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/v1/matches — create a match (auth required)
-matchesRouter.post('/', requireAuth, validate(createMatchSchema), async (req: AuthRequest, res, next) => {
+// POST /api/v1/matches — create a match
+matchesRouter.post('/', requireAuth, requirePermission('match:create'), validate(createMatchSchema), async (req: AuthRequest, res, next) => {
   try {
     const data = req.body;
     const match = await prisma.match.create({

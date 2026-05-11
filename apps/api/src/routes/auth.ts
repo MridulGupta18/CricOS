@@ -8,11 +8,13 @@ import jwt from 'jsonwebtoken';
 
 export const authRouter = Router();
 
+// Self-registration is capped at PLAYER. ORGANIZER+ must be granted by ADMIN/MASTER.
+// MASTER and ADMIN roles are never assignable via public registration.
 const registerSchema = z.object({
-  email: z.string().email(),
+  email:    z.string().email(),
   password: z.string().min(8),
-  name: z.string().min(2).max(100),
-  role: z.enum(['ORGANIZER', 'SCORER', 'PLAYER']).default('PLAYER'),
+  name:     z.string().min(2).max(100),
+  role:     z.enum(['SCORER', 'PLAYER', 'VIEWER']).default('VIEWER'),
 });
 
 const loginSchema = z.object({

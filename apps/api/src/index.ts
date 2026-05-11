@@ -15,6 +15,7 @@ import { playersRouter } from './routes/players';
 import { searchRouter } from './routes/search';
 import { sponsorsRouter } from './routes/sponsors';
 import { paymentsRouter } from './routes/payments';
+import { adminRouter } from './routes/admin';
 import { initSocketHandlers } from './socket/handlers';
 import { errorHandler } from './middleware/errorHandler';
 
@@ -44,15 +45,16 @@ app.use('/api/v1/auth', authLimiter);
 
 // ─── ROUTES ─────────────────────────────────────────────────
 
-app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/auth',    authRouter);
 app.use('/api/v1/matches', matchesRouter);
 app.use('/api/v1/scoring', scoringRouter);
 app.use('/api/v1/leagues', leaguesRouter);
-app.use('/api/v1/teams', teamsRouter);
+app.use('/api/v1/teams',   teamsRouter);
 app.use('/api/v1/players', playersRouter);
-app.use('/api/v1/search', searchRouter);
-app.use('/api/v1/sponsors', sponsorsRouter);
-app.use('/api/v1/payments', paymentsRouter);
+app.use('/api/v1/search',  searchRouter);
+app.use('/api/v1/sponsors',sponsorsRouter);
+app.use('/api/v1/payments',paymentsRouter);
+app.use('/api/v1/admin',   adminRouter);
 
 // Health check
 app.get('/health', (_, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));

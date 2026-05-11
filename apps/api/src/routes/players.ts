@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '@cricket-os/db';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 
 export const playersRouter = Router();
@@ -194,7 +194,7 @@ playersRouter.get('/:id/stats', async (req, res, next) => {
 });
 
 // POST /api/v1/players
-playersRouter.post('/', requireAuth, validate(createPlayerSchema), async (req: AuthRequest, res, next) => {
+playersRouter.post('/', requireAuth, requirePermission('player:create'), validate(createPlayerSchema), async (req: AuthRequest, res, next) => {
   try {
     const player = await prisma.player.create({ data: req.body });
     res.status(201).json({ success: true, data: player });

@@ -50,11 +50,12 @@ model RefreshToken {
 }
 
 enum UserRole {
-  ADMIN
-  ORGANIZER
-  SCORER
-  PLAYER
-  VIEWER
+  MASTER       // App owner — unrestricted access, set via backend only
+  ADMIN        // App-wide admin — can manage all data
+  ORGANIZER    // Can create & manage own leagues/matches
+  SCORER       // Can score matches they're assigned to
+  PLAYER       // Can manage own player profile
+  VIEWER       // Default — read-only access
 }
 
 // ─── PLAYERS & TEAMS ────────────────────────────────────────

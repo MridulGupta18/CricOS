@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '@cricket-os/db';
-import { requireAuth, requireRole, AuthRequest } from '../middleware/auth';
+import { requireAuth, requireRole, requirePermission, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 
 export const leaguesRouter = Router();
@@ -73,7 +73,7 @@ leaguesRouter.get('/:idOrSlug', async (req, res, next) => {
 });
 
 // POST /api/v1/leagues — create league
-leaguesRouter.post('/', requireAuth, requireRole('ORGANIZER', 'ADMIN'), validate(createLeagueSchema), async (req: AuthRequest, res, next) => {
+leaguesRouter.post('/', requireAuth, requirePermission('league:create'), validate(createLeagueSchema), async (req: AuthRequest, res, next) => {
   try {
     const slugExists = await prisma.league.findUnique({ where: { slug: req.body.slug } });
     if (slugExists) {

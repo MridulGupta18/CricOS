@@ -11,7 +11,7 @@ export interface AuthUser {
   role: UserRole;
 }
 
-export type UserRole = 'ADMIN' | 'ORGANIZER' | 'SCORER' | 'PLAYER' | 'VIEWER';
+export type UserRole = 'MASTER' | 'ADMIN' | 'ORGANIZER' | 'SCORER' | 'PLAYER' | 'VIEWER';
 
 // --- SCORING ENGINE TYPES ---
 
