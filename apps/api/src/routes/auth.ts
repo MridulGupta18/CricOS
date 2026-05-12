@@ -11,8 +11,13 @@ export const authRouter = Router();
 // MASTER, ADMIN, ORGANIZER, and SCORER roles are never assignable via public registration.
 const registerSchema = z.object({
   email:    z.string().email(),
-  password: z.string().min(8),
+  password: z.string().min(8)
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one number')
+    .regex(/[^A-Za-z0-9]/, 'Password must contain at least one symbol'),
   name:     z.string().min(2).max(100),
+  phone:    z.string().max(20).optional(),
   role:     z.enum(['PLAYER', 'VIEWER']).default('VIEWER'),
 });
 
@@ -24,7 +29,7 @@ const loginSchema = z.object({
 // POST /api/v1/auth/register
 authRouter.post('/register', validate(registerSchema), async (req, res, next) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, phone, role } = req.body;
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -33,7 +38,7 @@ authRouter.post('/register', validate(registerSchema), async (req, res, next) =>
 
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await prisma.user.create({
-      data: { email, passwordHash, name, role },
+      data: { email, passwordHash, name, phone: phone ?? null, role },
       select: { id: true, email: true, name: true, role: true },
     });
 
@@ -128,7 +133,11 @@ authRouter.get('/me', requireAuth, async (req: AuthRequest, res, next) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
-      select: { id: true, email: true, name: true, role: true, avatarUrl: true, createdAt: true },
+      select: {
+        id: true, email: true, name: true, role: true, phone: true,
+        avatarUrl: true, createdAt: true,
+        playerProfile: { select: { id: true, name: true, role: true, jerseyNumber: true } },
+      },
     });
     res.json({ success: true, data: user });
   } catch (err) {

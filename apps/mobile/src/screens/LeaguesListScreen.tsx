@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { leaguesApi } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { C, F, R, S } from '@/lib/theme';
 
 function useT() { return C; }
@@ -86,6 +87,8 @@ export function LeaguesListScreen() {
   const [q, setQ] = useState('');
   const { data, isLoading, refetch } = useQuery({ queryKey: ['leagues'], queryFn: () => leaguesApi.list() });
   const leagues: any[] = data?.data?.data ?? [];
+  const { user } = useAuthStore();
+  const canCreateLeague = user && ['ORGANIZER', 'ADMIN', 'MASTER'].includes(user.role);
 
   const types = [
     { id: 'all', label: 'All' },
@@ -106,10 +109,12 @@ export function LeaguesListScreen() {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: S.md }}>
           <Text style={{ fontFamily: F.bold, fontSize: 22, color: C.text }}>Leagues</Text>
           <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'center' }}>
-            <Pressable onPress={() => router.push('/league/create')}
-              style={{ backgroundColor: C.primary, borderRadius: R.md, paddingHorizontal: S.md, paddingVertical: 7 }}>
-              <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>+ Create</Text>
-            </Pressable>
+            {canCreateLeague && (
+              <Pressable onPress={() => router.push('/league/create')}
+                style={{ backgroundColor: C.primary, borderRadius: R.md, paddingHorizontal: S.md, paddingVertical: 7 }}>
+                <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>+ Create</Text>
+              </Pressable>
+            )}
             <Pressable onPress={() => router.push('/search')} style={{ padding: S.sm }}>
               <Text style={{ fontSize: 18, color: C.textSub }}>⌕</Text>
             </Pressable>

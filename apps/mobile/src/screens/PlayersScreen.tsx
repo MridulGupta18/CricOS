@@ -68,10 +68,6 @@ export function PlayersScreen() {
       <View style={{ paddingTop: insets.top + 8, borderBottomWidth: 1, borderBottomColor: C.border }}>
         <View style={{ height: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.xl, gap: S.sm }}>
           <Text style={{ flex: 1, fontFamily: F.bold, fontSize: 17, color: C.text, letterSpacing: -0.3 }}>Players</Text>
-          <Pressable onPress={() => router.push('/players/create')}
-            style={{ backgroundColor: C.primary, borderRadius: R.md, paddingHorizontal: S.md, paddingVertical: 6 }}>
-            <Text style={{ fontFamily: F.bold, fontSize: 12, color: '#fff' }}>+ Register</Text>
-          </Pressable>
         </View>
         <View style={{ paddingHorizontal: S.xl, paddingBottom: S.sm, gap: S.sm }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, backgroundColor: C.card2, borderWidth: 1, borderColor: C.border, borderRadius: R.lg, paddingHorizontal: S.lg, paddingVertical: 10 }}>

@@ -1,5 +1,8 @@
-import { useState } from 'react';
-import { View, Text, TextInput, Pressable, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from 'react-native';
+import { useState, useMemo } from 'react';
+import {
+  View, Text, TextInput, Pressable, KeyboardAvoidingView,
+  Platform, ScrollView, ActivityIndicator,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
@@ -7,34 +10,82 @@ import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, F, R, S } from '@/lib/theme';
 
-function useT() { return C; }
+// ── Password rules ───────────────────────────────────────────
+
+const RULES = [
+  { id: 'length',  label: 'At least 8 characters',        test: (p: string) => p.length >= 8       },
+  { id: 'upper',   label: 'One uppercase letter (A–Z)',    test: (p: string) => /[A-Z]/.test(p)     },
+  { id: 'lower',   label: 'One lowercase letter (a–z)',    test: (p: string) => /[a-z]/.test(p)     },
+  { id: 'digit',   label: 'One number (0–9)',              test: (p: string) => /[0-9]/.test(p)     },
+  { id: 'symbol',  label: 'One symbol (!@#$%^&*…)',        test: (p: string) => /[^A-Za-z0-9]/.test(p) },
+];
+
+function PasswordStrength({ password }: { password: string }) {
+  const passed = RULES.filter(r => r.test(password)).length;
+  if (!password) return null;
+  return (
+    <View style={{ marginTop: S.sm, gap: 5 }}>
+      {RULES.map(rule => {
+        const ok = rule.test(password);
+        return (
+          <View key={rule.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+            <View style={{
+              width: 16, height: 16, borderRadius: 8,
+              backgroundColor: ok ? `${C.green}22` : `${C.red}18`,
+              borderWidth: 1.5, borderColor: ok ? C.green : `${C.red}55`,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 9, color: ok ? C.green : C.red }}>{ok ? '✓' : '×'}</Text>
+            </View>
+            <Text style={{ fontFamily: F.reg, fontSize: 12, color: ok ? C.green : C.textMuted }}>
+              {rule.label}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 export function RegisterScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const t = useT();
   const { setUser, setTokens } = useAuthStore();
 
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [name,     setName]     = useState('');
+  const [email,    setEmail]    = useState('');
+  const [phone,    setPhone]    = useState('');
   const [password, setPassword] = useState('');
+  const [showPw,   setShowPw]   = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [pwFocused, setPwFocused] = useState(false);
+
+  const allRulesPassed = useMemo(() => RULES.every(r => r.test(password)), [password]);
 
   const inputStyle = {
-    backgroundColor: t.card, borderColor: t.border,
+    backgroundColor: C.card, borderColor: C.border,
     borderWidth: 1.5, borderRadius: R.lg,
     paddingHorizontal: S.lg, paddingVertical: 14,
     fontSize: 15, fontFamily: F.reg, color: C.text,
   };
 
   async function register() {
-    if (!name.trim() || !email.trim() || !password) {
-      Toast.show({ type: 'error', text1: 'Fill in all fields' });
+    if (!name.trim())  { Toast.show({ type: 'error', text1: 'Full name is required' }); return; }
+    if (!email.trim()) { Toast.show({ type: 'error', text1: 'Email is required' }); return; }
+    if (!allRulesPassed) {
+      Toast.show({ type: 'error', text1: 'Password doesn\'t meet requirements' });
+      setPwFocused(true);
       return;
     }
+
     setIsLoading(true);
     try {
-      const { data } = await authApi.register({ name: name.trim(), email: email.trim(), password });
+      const { data } = await authApi.register({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim() || undefined,
+        password,
+      });
       setUser(data.data.user);
       setTokens(data.data.accessToken, data.data.refreshToken);
       Toast.show({ type: 'success', text1: `Welcome, ${data.data.user.name}!` });
@@ -47,10 +98,17 @@ export function RegisterScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: t.bg }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: S.xl, paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24, justifyContent: 'center' }} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: C.bg }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: S.xl, paddingTop: insets.top + 32, paddingBottom: insets.bottom + 24 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         {/* Logo */}
-        <View style={{ alignItems: 'center', marginBottom: S.xxxl + 8 }}>
+        <View style={{ alignItems: 'center', marginBottom: S.xxl + 4 }}>
           <View style={{ width: 72, height: 72, borderRadius: R.xl, backgroundColor: 'rgba(59,130,246,0.12)', borderWidth: 1.5, borderColor: 'rgba(59,130,246,0.3)', alignItems: 'center', justifyContent: 'center', marginBottom: S.lg }}>
             <Text style={{ fontSize: 32 }}>🏏</Text>
           </View>
@@ -59,7 +117,9 @@ export function RegisterScreen() {
         </View>
 
         {/* Fields */}
-        <View style={{ gap: S.md }}>
+        <View style={{ gap: S.lg }}>
+
+          {/* Full name */}
           <View>
             <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textSub, letterSpacing: 0.8, marginBottom: S.sm }}>FULL NAME</Text>
             <TextInput
@@ -69,6 +129,8 @@ export function RegisterScreen() {
               style={inputStyle}
             />
           </View>
+
+          {/* Email */}
           <View>
             <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textSub, letterSpacing: 0.8, marginBottom: S.sm }}>EMAIL</Text>
             <TextInput
@@ -78,20 +140,50 @@ export function RegisterScreen() {
               style={inputStyle}
             />
           </View>
+
+          {/* Phone (optional) */}
           <View>
-            <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textSub, letterSpacing: 0.8, marginBottom: S.sm }}>PASSWORD</Text>
+            <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textSub, letterSpacing: 0.8, marginBottom: S.sm }}>
+              PHONE <Text style={{ fontFamily: F.reg, color: C.textMuted, letterSpacing: 0 }}>(optional)</Text>
+            </Text>
             <TextInput
-              value={password} onChangeText={setPassword}
-              placeholder="Min. 8 characters" placeholderTextColor={C.textMuted}
-              secureTextEntry
+              value={phone} onChangeText={setPhone}
+              placeholder="+1 403 555 0100" placeholderTextColor={C.textMuted}
+              keyboardType="phone-pad" autoComplete="tel"
               style={inputStyle}
             />
+          </View>
+
+          {/* Password */}
+          <View>
+            <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.textSub, letterSpacing: 0.8, marginBottom: S.sm }}>PASSWORD</Text>
+            <View style={{ position: 'relative' }}>
+              <TextInput
+                value={password} onChangeText={setPassword}
+                placeholder="Create a strong password" placeholderTextColor={C.textMuted}
+                secureTextEntry={!showPw}
+                onFocus={() => setPwFocused(true)}
+                style={[inputStyle, { paddingRight: 48 }]}
+              />
+              <Pressable
+                onPress={() => setShowPw(v => !v)}
+                hitSlop={8}
+                style={{ position: 'absolute', right: S.lg, top: 0, bottom: 0, justifyContent: 'center' }}
+              >
+                <Text style={{ fontSize: 18, color: C.textMuted }}>{showPw ? '🙈' : '👁'}</Text>
+              </Pressable>
+            </View>
+            {(pwFocused || password.length > 0) && <PasswordStrength password={password} />}
           </View>
 
           <Pressable
             onPress={register}
             disabled={isLoading}
-            style={({ pressed }) => ({ backgroundColor: C.blue, borderRadius: R.lg, paddingVertical: 15, alignItems: 'center', marginTop: S.sm, opacity: pressed || isLoading ? 0.85 : 1 })}
+            style={({ pressed }) => ({
+              backgroundColor: C.blue, borderRadius: R.lg, paddingVertical: 15,
+              alignItems: 'center', marginTop: S.sm,
+              opacity: pressed || isLoading ? 0.85 : 1,
+            })}
           >
             {isLoading
               ? <ActivityIndicator color="#fff" size="small" />
@@ -106,10 +198,6 @@ export function RegisterScreen() {
             <Text style={{ fontFamily: F.semi, fontSize: 14, color: C.blue }}>Sign in</Text>
           </Pressable>
         </View>
-
-        <Pressable onPress={() => router.back()} style={{ marginTop: S.lg, alignItems: 'center' }}>
-          <Text style={{ fontFamily: F.reg, fontSize: 14, color: C.textMuted }}>Back</Text>
-        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );

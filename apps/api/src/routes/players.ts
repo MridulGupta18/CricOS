@@ -33,7 +33,7 @@ playersRouter.get('/', async (req, res, next) => {
         where,
         select: {
           id: true, name: true, role: true, avatarUrl: true, city: true, country: true,
-          jerseyNumber: true, battingStyle: true, bowlingStyle: true,
+          jerseyNumber: true, battingStyle: true, bowlingStyle: true, userId: true,
           careerStats: { select: { battingRuns: true, battingAverage: true, bowlingWickets: true, bowlingAverage: true } },
           teamMemberships: {
             where: { isActive: true },

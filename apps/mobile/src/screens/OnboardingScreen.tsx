@@ -104,8 +104,8 @@ export function OnboardingScreen() {
         ))}
       </View>
 
-      {/* CTAs */}
-      <View style={{ paddingHorizontal: S.xl, paddingBottom: insets.bottom + S.lg, gap: S.sm }}>
+      {/* CTA */}
+      <View style={{ paddingHorizontal: S.xl, paddingBottom: insets.bottom + S.lg, gap: S.md }}>
         <Pressable onPress={next}
           style={({ pressed }) => ({ backgroundColor: C.primary, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', opacity: pressed ? 0.85 : 1 })}>
           <Text style={{ fontFamily: F.bold, fontSize: 16, color: '#fff' }}>
@@ -113,10 +113,12 @@ export function OnboardingScreen() {
           </Text>
         </Pressable>
         {active === SLIDES.length - 1 && (
-          <Pressable onPress={() => router.replace('/auth/register')}
-            style={({ pressed }) => ({ backgroundColor: C.card, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: C.border, opacity: pressed ? 0.85 : 1 })}>
-            <Text style={{ fontFamily: F.semi, fontSize: 16, color: C.text }}>Create Account</Text>
-          </Pressable>
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 4 }}>
+            <Text style={{ fontFamily: F.reg, fontSize: 14, color: C.textSub }}>Already have an account?</Text>
+            <Pressable onPress={() => router.replace('/auth/login')} hitSlop={8}>
+              <Text style={{ fontFamily: F.semi, fontSize: 14, color: C.primaryLight }}>Sign in</Text>
+            </Pressable>
+          </View>
         )}
       </View>
     </View>
