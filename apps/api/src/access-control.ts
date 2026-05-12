@@ -131,6 +131,14 @@ const ROLE_PERMISSIONS: Record<UserRole, Action[]> = {
     'player:update',     // Own profile only — ownership enforced in route
     'team:create',       // Can create their own team
     'team:manage_roster',
+    'match:create',      // Any player can set up an individual (non-league) match
+    'match:update',
+    'match:score',
+    'match:set_toss',
+    'match:set_result',
+    'match:start_innings',
+    'match:super_over',
+    'match:dls',
   ],
 
   // ── VIEWER — default for new signups; read-only ───────────

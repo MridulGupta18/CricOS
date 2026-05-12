@@ -74,7 +74,7 @@ leaguesRouter.get('/:idOrSlug', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/v1/leagues — create league
+// POST /api/v1/leagues — create league (ORGANIZER+ only — leagues are a managed product)
 leaguesRouter.post('/', requireAuth, requirePermission('league:create'), validate(createLeagueSchema), async (req: AuthRequest, res, next) => {
   try {
     const slugExists = await prisma.league.findUnique({ where: { slug: req.body.slug } });
