@@ -5,7 +5,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate --schema=../../packages/db/prisma/schema.prisma",
     "start": "tsx src/index.ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "seed:calgary": "tsx scripts/seed-calgary-league.ts",
+    "seed:calgary:prod": "tsx scripts/seed-calgary-league.ts --api https://cricosmridulgupta18-production.up.railway.app"
   },
   "dependencies": {
     "@cricket-os/db": "*",

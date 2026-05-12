@@ -15,6 +15,7 @@ const createPlayerSchema = z.object({
   city: z.string().optional(),
   country: z.string().default('India'),
   dateOfBirth: z.string().datetime().optional(),
+  userId: z.string().cuid().optional().nullable(), // link to a user account for scorer eligibility
 });
 
 // GET /api/v1/players — paginated list with optional role/search filters
