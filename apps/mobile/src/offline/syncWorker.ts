@@ -2,6 +2,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { getPendingBalls, removePendingBall } from './storage';
 import { scoringApi } from '@/lib/api';
 import { useScoringStore } from '@/stores/scoringStore';
+import { useAuthStore } from '@/stores/authStore';
 
 // ============================================================
 // SYNC WORKER — flushes offline queue when back online
@@ -11,6 +12,8 @@ let isSyncing = false;
 
 export async function syncPendingBalls() {
   if (isSyncing) return;
+  // Don't sync until auth store has rehydrated — avoids sending unauthenticated requests
+  if (!useAuthStore.getState().accessToken) return;
   isSyncing = true;
 
   try {

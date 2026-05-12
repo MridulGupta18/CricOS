@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { View, Text, Pressable, StatusBar, Dimensions, FlatList, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,6 +36,15 @@ export function OnboardingScreen() {
   const [active, setActive] = useState(0);
   const listRef = useRef<FlatList>(null);
 
+  // Animated values for each dot — drive width/opacity with Animated.Value
+  const dotAnims = useRef(SLIDES.map((_, i) => new Animated.Value(i === 0 ? 1 : 0))).current;
+
+  useEffect(() => {
+    dotAnims.forEach((anim, i) => {
+      Animated.spring(anim, { toValue: i === active ? 1 : 0, useNativeDriver: false }).start();
+    });
+  }, [active]);
+
   function next() {
     if (active < SLIDES.length - 1) {
       listRef.current?.scrollToIndex({ index: active + 1, animated: true });
@@ -49,9 +58,9 @@ export function OnboardingScreen() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
 
-      {/* Skip */}
+      {/* Skip → register (not login) so new users land on the right screen */}
       <View style={{ position: 'absolute', top: insets.top + 12, right: S.xl, zIndex: 10 }}>
-        <Pressable onPress={() => router.replace('/auth/login')} hitSlop={16}>
+        <Pressable onPress={() => router.replace('/auth/register')} hitSlop={16}>
           <Text style={{ fontFamily: F.medium, fontSize: 14, color: C.textMuted }}>Skip</Text>
         </Pressable>
       </View>
@@ -84,10 +93,14 @@ export function OnboardingScreen() {
         )}
       />
 
-      {/* Dots */}
+      {/* Animated dots */}
       <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: S.xl }}>
         {SLIDES.map((_, i) => (
-          <View key={i} style={{ height: 6, borderRadius: 3, backgroundColor: i === active ? C.primaryLight : C.border, width: i === active ? 22 : 6, transition: 'all 0.3s' as any }} />
+          <Animated.View key={i} style={{
+            height: 6, borderRadius: 3,
+            backgroundColor: i === active ? C.primaryLight : C.border,
+            width: dotAnims[i].interpolate({ inputRange: [0, 1], outputRange: [6, 22] }),
+          }} />
         ))}
       </View>
 

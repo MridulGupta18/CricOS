@@ -44,6 +44,19 @@ teamsRouter.post('/', requireAuth, requirePermission('team:create'), validate(cr
 // PATCH /api/v1/teams/:id — update team details
 teamsRouter.patch('/:id', requireAuth, requirePermission('team:update'), validate(updateTeamSchema), async (req: AuthRequest, res, next) => {
   try {
+    const existing = await prisma.team.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Team not found' } });
+
+    // Only CAPTAIN of this team, ADMIN, or MASTER can update team details
+    if (req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+      const isCaptain = await prisma.teamMember.findFirst({
+        where: { teamId: req.params.id, isActive: true, role: 'CAPTAIN', player: { userId: req.user!.id } },
+      });
+      if (!isCaptain) {
+        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the team captain can edit team details' } });
+      }
+    }
+
     const team = await prisma.team.update({ where: { id: req.params.id }, data: req.body });
     res.json({ success: true, data: team });
   } catch (err) { next(err); }

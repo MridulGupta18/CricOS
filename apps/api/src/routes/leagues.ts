@@ -95,7 +95,7 @@ leaguesRouter.patch('/:id', requireAuth, requirePermission('league:update'), val
   try {
     const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
-    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN') {
+    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can edit this league' } });
     }
     const league = await prisma.league.update({
@@ -112,7 +112,7 @@ leaguesRouter.patch('/:id/status', requireAuth, requirePermission('league:set_st
   try {
     const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
-    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN') {
+    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can change the league status' } });
     }
     const { status } = req.body;
@@ -129,8 +129,30 @@ leaguesRouter.patch('/:id/status', requireAuth, requirePermission('league:set_st
 leaguesRouter.post('/:id/teams', requireAuth, requirePermission('league:register_team'), async (req: AuthRequest, res, next) => {
   try {
     const { teamId } = req.body;
+    if (!teamId) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'teamId required' } });
+
     const league = await prisma.league.findUnique({ where: { id: req.params.id } });
     if (!league) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
+
+    // Caller must be the league organizer, ADMIN, MASTER, or a captain/VC in the registering team
+    const uid = req.user!.id;
+    const isLeagueAdmin = league.organizerId === uid || req.user!.role === 'ADMIN' || req.user!.role === 'MASTER';
+    if (!isLeagueAdmin) {
+      const captaincy = await prisma.teamMember.findFirst({
+        where: {
+          teamId,
+          isActive: true,
+          role: { in: ['CAPTAIN', 'VICE_CAPTAIN'] },
+          player: { userId: uid },
+        },
+      });
+      if (!captaincy) {
+        return res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'Only the league organizer or a team captain can register a team' },
+        });
+      }
+    }
 
     const existing = await prisma.leagueTeam.findUnique({
       where: { leagueId_teamId: { leagueId: req.params.id, teamId } },
@@ -161,7 +183,7 @@ leaguesRouter.get('/:id/standings', async (req, res, next) => {
       prisma.match.findMany({
         where: { leagueId: req.params.id, status: 'COMPLETED' },
         include: {
-          innings: { select: { battingTeamId: true, totalRuns: true, completedOvers: true, extraBalls: true, isCompleted: true } },
+          innings: { select: { battingTeamId: true, totalRuns: true, totalWickets: true, completedOvers: true, extraBalls: true, isCompleted: true } },
         },
       }),
     ]);
@@ -182,7 +204,13 @@ leaguesRouter.get('/:id/standings', async (req, res, next) => {
 
       stats[home].played++; stats[away].played++;
 
-      const toOvers = (inn: any) => (inn.completedOvers ?? 0) + (inn.extraBalls ?? 0) / 6;
+      // ICC NRR rule: if a team is bowled out (all 10 wickets), use the full
+      // match overs allocation as the denominator, not actual overs batted.
+      const toOvers = (inn: any) => {
+        const actual = (inn.completedOvers ?? 0) + (inn.extraBalls ?? 0) / 6;
+        const allOut = (inn.totalWickets ?? 0) >= 10;
+        return allOut ? m.overs : actual;
+      };
 
       for (const inn of m.innings) {
         const batting  = inn.battingTeamId;

@@ -7,13 +7,13 @@ import { requireAuth, generateAccessToken, generateRefreshToken, verifyRefreshTo
 
 export const authRouter = Router();
 
-// Self-registration is capped at PLAYER. ORGANIZER+ must be granted by ADMIN/MASTER.
-// MASTER and ADMIN roles are never assignable via public registration.
+// Self-registration is capped at PLAYER/VIEWER. SCORER+ must be granted by ADMIN/MASTER.
+// MASTER, ADMIN, ORGANIZER, and SCORER roles are never assignable via public registration.
 const registerSchema = z.object({
   email:    z.string().email(),
   password: z.string().min(8),
   name:     z.string().min(2).max(100),
-  role:     z.enum(['SCORER', 'PLAYER', 'VIEWER']).default('VIEWER'),
+  role:     z.enum(['PLAYER', 'VIEWER']).default('VIEWER'),
 });
 
 const loginSchema = z.object({

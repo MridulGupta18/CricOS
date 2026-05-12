@@ -116,6 +116,20 @@ export function LeaguesListScreen() {
           </View>
         </View>
 
+        {/* Search input */}
+        <View style={{ backgroundColor: C.card, borderRadius: R.md, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.md, marginBottom: S.sm, marginTop: S.sm }}>
+          <Text style={{ color: C.textMuted, marginRight: S.sm, fontSize: 14 }}>⌕</Text>
+          <TextInput
+            value={q}
+            onChangeText={setQ}
+            placeholder="Search leagues…"
+            placeholderTextColor={C.textMuted}
+            style={{ flex: 1, fontFamily: F.reg, fontSize: 14, color: C.text, paddingVertical: 9 }}
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+          />
+        </View>
+
         {/* Format filter tabs */}
         <TabBar tabs={types} active={filter} onChange={setFilter} />
       </View>

@@ -18,6 +18,9 @@ const createMatchSchema = z.object({
   leagueId: z.string().cuid().optional(),
   title: z.string().optional(),
   isPublic: z.boolean().default(true),
+}).refine(d => d.homeTeamId !== d.awayTeamId, {
+  message: 'Home team and away team must be different',
+  path: ['awayTeamId'],
 });
 
 const tossSchema = z.object({
@@ -117,12 +120,34 @@ matchesRouter.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Public select omits internal IDs that must not leak to unauthenticated viewers
+const publicMatchSelect = {
+  id: true, title: true, shareToken: true, status: true, format: true, overs: true,
+  venue: true, city: true, scheduledAt: true, isPublic: true,
+  tossWinnerId: true, tossDecision: true,
+  resultType: true, winnerId: true, winMargin: true, winMarginType: true, createdAt: true,
+  homeTeam: { select: { id: true, name: true, shortName: true, logoUrl: true } },
+  awayTeam: { select: { id: true, name: true, shortName: true, logoUrl: true } },
+  league:   { select: { id: true, name: true, slug: true } },
+};
+
 // GET /api/v1/matches/public/:shareToken — public shareable view
 matchesRouter.get('/public/:shareToken', async (req, res, next) => {
   try {
     const match = await prisma.match.findUnique({
       where: { shareToken: req.params.shareToken },
-      select: { ...matchSelect, innings: { include: { ballEvents: { orderBy: { rawBallNumber: 'asc' } } } } },
+      select: {
+        ...publicMatchSelect,
+        innings: {
+          select: {
+            id: true, inningsNumber: true, battingTeamId: true, bowlingTeamId: true,
+            totalRuns: true, totalWickets: true, completedOvers: true, extraBalls: true,
+            extrasWides: true, extrasNoBalls: true, extrasByes: true, extrasLegByes: true,
+            isCompleted: true,
+            ballEvents: { where: { deletedAt: null }, orderBy: { rawBallNumber: 'asc' }, include: { wicket: true } },
+          },
+        },
+      },
     });
 
     if (!match || !match.isPublic) {
@@ -146,7 +171,7 @@ matchesRouter.post('/', requireAuth, requirePermission('match:create'), validate
 });
 
 // PATCH /api/v1/matches/:id/toss — set toss result
-matchesRouter.patch('/:id/toss', requireAuth, validate(tossSchema), async (req: AuthRequest, res, next) => {
+matchesRouter.patch('/:id/toss', requireAuth, requirePermission('match:set_toss'), validate(tossSchema), async (req: AuthRequest, res, next) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });

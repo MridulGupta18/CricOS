@@ -68,6 +68,7 @@ export const matchesApi = {
 export const scoringApi = {
   startInnings: (matchId: string, data: unknown) =>
     apiClient.post(`/scoring/matches/${matchId}/innings`, data),
+  endInnings: (inningsId: string) => apiClient.patch(`/scoring/innings/${inningsId}/complete`, {}),
   scoreBall: (data: unknown) => apiClient.post('/scoring/ball', data),
   undoBall: (ballId: string) => apiClient.delete(`/scoring/ball/${ballId}`),
   getInnings: (id: string) => apiClient.get(`/scoring/innings/${id}`),

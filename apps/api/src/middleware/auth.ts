@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { randomBytes } from 'crypto';
 import jwt from 'jsonwebtoken';
 import { UserRole } from '@cricket-os/shared';
 import { can, atLeast, Action } from '../access-control';
@@ -12,9 +13,10 @@ if (!JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
   }
-  console.warn('[CricOS] WARNING: JWT_SECRET not set — using insecure dev secret. Set JWT_SECRET in production!');
+  console.warn('[CricOS] WARNING: JWT_SECRET not set — using ephemeral dev secret. Set JWT_SECRET in production!');
 }
-const _JWT_SECRET = JWT_SECRET ?? 'dev-secret-DO-NOT-USE-IN-PRODUCTION-' + Math.random();
+// Use cryptographically random bytes for dev fallback (not Math.random)
+const _JWT_SECRET = JWT_SECRET ?? randomBytes(32).toString('hex');
 // Exported so socket handlers use the exact same secret — never diverge
 export { _JWT_SECRET as JWT_SECRET_INTERNAL };
 
@@ -110,7 +112,11 @@ export function generateAccessToken(payload: { id: string; email: string; role: 
   return jwt.sign(payload, _JWT_SECRET, { expiresIn: '15m' });
 }
 
-const _REFRESH_SECRET = (process.env.REFRESH_TOKEN_SECRET ?? _JWT_SECRET) + '_refresh_v1';
+const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET;
+if (!REFRESH_TOKEN_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('FATAL: REFRESH_TOKEN_SECRET environment variable is not set. Refusing to start.');
+}
+const _REFRESH_SECRET = (REFRESH_TOKEN_SECRET ?? _JWT_SECRET) + '_refresh_v1';
 
 export function generateRefreshToken(payload: { id: string }) {
   return jwt.sign(payload, _REFRESH_SECRET, { expiresIn: '30d' });

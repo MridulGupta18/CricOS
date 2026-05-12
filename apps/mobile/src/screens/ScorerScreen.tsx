@@ -288,6 +288,11 @@ export function ScorerScreen({ matchId }: Props) {
   const [manualNonStrikerId, setManualNonStrikerId] = useState<string | null>(null);
   const [manualBowlerId,     setManualBowlerId]     = useState<string | null>(null);
 
+  // Post-event prompts
+  const [needNewBatsman, setNeedNewBatsman] = useState(false);
+  const [needNewBowler,  setNeedNewBowler]  = useState(false);
+  const [startingInn2,   setStartingInn2]   = useState(false);
+
   const { data: scorecardData, refetch } = useQuery({
     queryKey: ['scorecard-scorer', matchId],
     queryFn:  () => scoringApi.getScorecard(matchId),
@@ -380,12 +385,18 @@ export function ScorerScreen({ matchId }: Props) {
       extraRuns: params.extraRuns ?? 0, wicket: params.wicket ?? null,
     };
 
+    const isLegalBallValue = !params.extraType || (params.extraType !== 'WIDE' && params.extraType !== 'NO_BALL');
     try {
       if (isOnline) {
         const { data } = await scoringApi.scoreBall(payload);
         setLastBallId(data.data?.ballEvent?.id ?? null);
         // Clear manual overrides so engine state takes over
         setManualStrikerId(null); setManualNonStrikerId(null); setManualBowlerId(null);
+        // Prompt for new batsman after a wicket
+        if (params.wicket) { setNeedNewBatsman(true); }
+        // Prompt for new bowler after over completes
+        const nextLegal = isLegalBallValue ? legalBalls + 1 : legalBalls;
+        if (isLegalBallValue && nextLegal >= 6) { setNeedNewBowler(true); }
         refetch();
       } else {
         const ball: BallEvent = {
@@ -393,11 +404,10 @@ export function ScorerScreen({ matchId }: Props) {
           overNumber: overNum, ballNumber: legalBalls, rawBallNumber: 0,
           batsmanId: strikerId, bowlerId, runs: params.runs as any,
           extras: params.extraType ? { type: params.extraType, runs: params.extraRuns ?? 1 } : null,
-          wicket: params.wicket ?? null, isFreeHit,
-          isLegalBall: !params.extraType || (params.extraType !== 'WIDE' && params.extraType !== 'NO_BALL'),
+          wicket: params.wicket ?? null, isFreeHit, isLegalBall: isLegalBallValue,
           timestamp: new Date().toISOString(),
         };
-        queueBallEvent(ball); addPendingBall(ball);
+        await queueBallEvent(ball); addPendingBall(ball);
       }
     } catch {
       const ball: BallEvent = {
@@ -405,9 +415,10 @@ export function ScorerScreen({ matchId }: Props) {
         overNumber: overNum, ballNumber: legalBalls, rawBallNumber: 0,
         batsmanId: strikerId, bowlerId, runs: params.runs as any,
         extras: params.extraType ? { type: params.extraType, runs: params.extraRuns ?? 1 } : null,
-        wicket: params.wicket ?? null, isFreeHit, isLegalBall: true, timestamp: new Date().toISOString(),
+        wicket: params.wicket ?? null, isFreeHit, isLegalBall: isLegalBallValue,
+        timestamp: new Date().toISOString(),
       };
-      queueBallEvent(ball); addPendingBall(ball);
+      await queueBallEvent(ball); addPendingBall(ball);
     } finally {
       setIsSubmitting(false); setShowExtras(false);
     }
@@ -453,6 +464,50 @@ export function ScorerScreen({ matchId }: Props) {
     );
   }
 
+  // Show innings 2 setup when innings 1 is done and innings 2 hasn't started
+  const isInningsBreak = match?.status === 'INNINGS_BREAK';
+  const inn2Started = match?.innings?.some((i: any) => i.inningsNumber === 2);
+  if (isInningsBreak && !inn2Started) {
+    const inn1 = match?.innings?.find((i: any) => i.inningsNumber === 1);
+    const battingTeamId2 = inn1?.bowlingTeamId ?? '';
+    const bowlingTeamId2 = inn1?.battingTeamId ?? '';
+    const teamById = (id: string) => id === match?.homeTeam?.id ? match?.homeTeam : match?.awayTeam;
+    return (
+      <View style={{ flex: 1, backgroundColor: C.bg, padding: S.xl, paddingTop: insets.top + S.xl, alignItems: 'center', justifyContent: 'center' }}>
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+        <Text style={{ fontFamily: F.bold, fontSize: 28, color: C.text, marginBottom: S.sm }}>Innings Break</Text>
+        <Text style={{ fontFamily: F.reg, fontSize: 14, color: C.textSub, marginBottom: S.xl, textAlign: 'center' }}>
+          {teamById(match?.homeTeam?.id)?.shortName} {inn1?.totalRuns}/{inn1?.totalWickets} in {inn1?.completedOvers} ov
+        </Text>
+        <View style={{ backgroundColor: C.card, borderRadius: R.xl, padding: S.xl, borderWidth: 1, borderColor: C.border, width: '100%', marginBottom: S.xl }}>
+          <Text style={{ fontFamily: F.semi, fontSize: 13, color: C.textMuted, marginBottom: S.sm }}>2nd Innings</Text>
+          <Text style={{ fontFamily: F.bold, fontSize: 16, color: C.text }}>
+            {teamById(battingTeamId2)?.shortName ?? '—'} to bat
+          </Text>
+          <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted, marginTop: 4 }}>
+            Target: {(inn1?.totalRuns ?? 0) + 1} runs
+          </Text>
+        </View>
+        <Pressable
+          disabled={startingInn2}
+          onPress={async () => {
+            setStartingInn2(true);
+            try {
+              await scoringApi.startInnings(matchId, { battingTeamId: battingTeamId2, bowlingTeamId: bowlingTeamId2, inningsNumber: 2 });
+              queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] });
+            } catch (e: any) {
+              Alert.alert('Error', e?.response?.data?.error?.message ?? 'Could not start 2nd innings');
+            } finally { setStartingInn2(false); }
+          }}
+          style={({ pressed }) => ({ backgroundColor: startingInn2 ? C.border : C.primary, borderRadius: R.lg, paddingVertical: 16, alignItems: 'center', width: '100%', opacity: pressed ? 0.85 : 1 })}>
+          <Text style={{ fontFamily: F.bold, fontSize: 16, color: '#fff' }}>
+            {startingInn2 ? 'Starting…' : 'Start 2nd Innings →'}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
@@ -478,10 +533,19 @@ export function ScorerScreen({ matchId }: Props) {
           onPress={() =>
             Alert.alert(
               'End Innings',
-              `End this innings at ${totalRuns}/${totalWickets} (${overNum}.${legalBalls} ov)?`,
+              `End innings at ${totalRuns}/${totalWickets} (${overNum}.${legalBalls} ov)?`,
               [
                 { text: 'Cancel', style: 'cancel' },
-                { text: 'End Innings', style: 'destructive', onPress: () => router.back() },
+                {
+                  text: 'End Innings', style: 'destructive',
+                  onPress: async () => {
+                    if (!inningsId) return;
+                    try {
+                      await scoringApi.endInnings(inningsId);
+                      queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] });
+                    } catch { router.back(); }
+                  },
+                },
               ]
             )
           }
@@ -495,6 +559,24 @@ export function ScorerScreen({ matchId }: Props) {
         <View style={{ backgroundColor: 'rgba(16,185,129,0.15)', borderBottomWidth: 1, borderBottomColor: 'rgba(16,185,129,0.4)', paddingVertical: 8, alignItems: 'center' }}>
           <Text style={{ fontFamily: F.bold, fontSize: 13, color: C.green }}>Innings Complete — {totalRuns}/{totalWickets}</Text>
         </View>
+      )}
+
+      {/* ── New batsman prompt ── */}
+      {needNewBatsman && !innings?.isComplete && (
+        <Pressable onPress={() => { setNeedNewBatsman(false); openPicker('striker'); }}
+          style={{ backgroundColor: 'rgba(239,68,68,0.12)', borderBottomWidth: 1, borderBottomColor: 'rgba(239,68,68,0.3)', paddingVertical: 10, paddingHorizontal: S.xl, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ fontFamily: F.bold, fontSize: 13, color: C.red }}>Wicket — select new batsman</Text>
+          <Text style={{ fontFamily: F.reg, fontSize: 12, color: C.red }}>Tap here ›</Text>
+        </Pressable>
+      )}
+
+      {/* ── New bowler prompt ── */}
+      {needNewBowler && !innings?.isComplete && (
+        <Pressable onPress={() => { setNeedNewBowler(false); openPicker('bowler'); }}
+          style={{ backgroundColor: 'rgba(99,102,241,0.12)', borderBottomWidth: 1, borderBottomColor: 'rgba(99,102,241,0.3)', paddingVertical: 10, paddingHorizontal: S.xl, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ fontFamily: F.bold, fontSize: 13, color: C.primaryLight }}>Over complete — select new bowler</Text>
+          <Text style={{ fontFamily: F.reg, fontSize: 12, color: C.primaryLight }}>Tap here ›</Text>
+        </Pressable>
       )}
 
       {/* ── Free hit banner ── */}
