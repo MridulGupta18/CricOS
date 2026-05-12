@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { matchesApi, leaguesApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
+import { useRegionStore } from '@/stores/regionStore';
 import { C, F, R, S } from '@/lib/theme';
 
 const GRAD_BG = '#141929';
@@ -120,11 +121,15 @@ export function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const dotAnim = useRef(new Animated.Value(1)).current;
 
+  const { city } = useRegionStore();
+  const matchParams: Record<string, string> = { limit: '50' };
+  if (city) matchParams.city = city;
+
   const { data: md, isLoading: ml, refetch: rm } = useQuery({
-    queryKey: ['matches'], queryFn: () => matchesApi.list({ limit: '50' }), retry: 2,
+    queryKey: ['matches', city], queryFn: () => matchesApi.list(matchParams), retry: 2,
   });
   const { data: ld, isLoading: ll, refetch: rl } = useQuery({
-    queryKey: ['leagues'], queryFn: () => leaguesApi.list(), retry: 2,
+    queryKey: ['leagues', city], queryFn: () => leaguesApi.list(city ? { city } : undefined), retry: 2,
   });
 
   const all: any[] = md?.data?.data ?? [];
@@ -133,6 +138,7 @@ export function DashboardScreen() {
   const leagues: any[] = ld?.data?.data ?? [];
 
   const authUser = useAuthStore((s) => s.user);
+  const canCreateLeague = authUser && ['ORGANIZER', 'ADMIN', 'MASTER'].includes(authUser.role);
   const userInitials = authUser?.name
     ? authUser.name.split(' ').map((w: string) => w[0].toUpperCase()).slice(0, 2).join('')
     : '?';
@@ -162,23 +168,35 @@ export function DashboardScreen() {
       {/* Sticky header */}
       <View style={{ paddingTop: insets.top + 10, paddingHorizontal: S.xl, paddingBottom: S.sm, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: `${C.bg}F8` }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: S.sm }}>
+          <View>
+            <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>{greet}</Text>
+            <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.text, letterSpacing: -0.4 }}>Explore Cricket</Text>
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
-            <View>
-              <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>{greet}</Text>
-              <Text style={{ fontFamily: F.bold, fontSize: 18, color: C.text, letterSpacing: -0.4 }}>Explore Cricket</Text>
-            </View>
-            <Pressable onPress={() => router.push('/league/create')}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.primary + '22', borderWidth: 1, borderColor: C.primary + '44', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }}>
-              <Text style={{ fontSize: 12 }}>🏆</Text>
-              <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.primaryLight }}>New League</Text>
+            {canCreateLeague && (
+              <Pressable onPress={() => router.push('/league/create')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.primary + '22', borderWidth: 1, borderColor: C.primary + '44', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 }}>
+                <Text style={{ fontSize: 12 }}>🏆</Text>
+                <Text style={{ fontFamily: F.semi, fontSize: 12, color: C.primaryLight }}>New League</Text>
+              </Pressable>
+            )}
+            <Pressable onPress={() => router.push('/(tabs)/profile')}
+              style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(99,102,241,0.3)' }}>
+              <Text style={{ fontFamily: F.bold, fontSize: 13, color: '#fff' }}>{userInitials}</Text>
             </Pressable>
           </View>
-          <Pressable onPress={() => router.push('/(tabs)/profile')}
-            style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(99,102,241,0.3)' }}>
-            <Text style={{ fontFamily: F.bold, fontSize: 13, color: '#fff' }}>{userInitials}</Text>
-          </Pressable>
         </View>
-        {/* Search bar — matches design */}
+        {/* Region chip */}
+        <Pressable onPress={() => router.push('/region-picker')}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: city ? `${C.green}15` : C.card2, borderWidth: 1, borderColor: city ? `${C.green}44` : C.border, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginBottom: S.sm }}>
+          <Text style={{ fontSize: 13 }}>📍</Text>
+          <Text style={{ fontFamily: F.semi, fontSize: 12, color: city ? C.green : C.textMuted }}>
+            {city ?? 'All Regions'}
+          </Text>
+          <Text style={{ fontFamily: F.reg, fontSize: 10, color: C.textMuted }}>▾</Text>
+        </Pressable>
+
+        {/* Search bar */}
         <Pressable onPress={() => router.push('/search')}
           style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, backgroundColor: C.card2, borderWidth: 1, borderColor: C.border, borderRadius: R.lg, paddingHorizontal: S.lg, paddingVertical: 10 }}>
           <Text style={{ fontSize: 16, color: C.textMuted }}>⌕</Text>

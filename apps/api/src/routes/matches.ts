@@ -63,13 +63,14 @@ const matchSelect = {
 // GET /api/v1/matches — list with filters
 matchesRouter.get('/', async (req, res, next) => {
   try {
-    const { status, leagueId, teamId, page = '1', limit = '20' } = req.query as Record<string, string>;
+    const { status, leagueId, teamId, city, page = '1', limit = '20' } = req.query as Record<string, string>;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where: Record<string, unknown> = { isPublic: true };
     if (status) where.status = status;
     if (leagueId) where.leagueId = leagueId;
     if (teamId) where.OR = [{ homeTeamId: teamId }, { awayTeamId: teamId }];
+    if (city) where.city = { contains: city, mode: 'insensitive' };
 
     const [matches, total] = await Promise.all([
       prisma.match.findMany({

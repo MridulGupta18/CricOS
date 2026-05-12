@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { leaguesApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
+import { useRegionStore } from '@/stores/regionStore';
 import { C, F, R, S } from '@/lib/theme';
 
 function useT() { return C; }
@@ -85,7 +86,11 @@ export function LeaguesListScreen() {
   const t = useT(); const router = useRouter(); const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState('all');
   const [q, setQ] = useState('');
-  const { data, isLoading, refetch } = useQuery({ queryKey: ['leagues'], queryFn: () => leaguesApi.list() });
+  const { city } = useRegionStore();
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['leagues', city],
+    queryFn: () => leaguesApi.list(city ? { city } : undefined),
+  });
   const leagues: any[] = data?.data?.data ?? [];
   const { user } = useAuthStore();
   const canCreateLeague = user && ['ORGANIZER', 'ADMIN', 'MASTER'].includes(user.role);
@@ -159,10 +164,12 @@ export function LeaguesListScreen() {
             <Text style={{ fontFamily: F.reg, fontSize: 14, color: C.textSub, textAlign: 'center', marginBottom: S.xxl }}>
               Create a league to manage teams, fixtures, standings and results.
             </Text>
-            <Pressable onPress={() => router.push('/league/create')}
-              style={({ pressed }) => ({ backgroundColor: C.primary, borderRadius: R.lg, paddingHorizontal: S.xxl, paddingVertical: 14, opacity: pressed ? 0.85 : 1 })}>
-              <Text style={{ fontFamily: F.bold, fontSize: 15, color: '#fff' }}>+ Create League</Text>
-            </Pressable>
+            {canCreateLeague && (
+              <Pressable onPress={() => router.push('/league/create')}
+                style={({ pressed }) => ({ backgroundColor: C.primary, borderRadius: R.lg, paddingHorizontal: S.xxl, paddingVertical: 14, opacity: pressed ? 0.85 : 1 })}>
+                <Text style={{ fontFamily: F.bold, fontSize: 15, color: '#fff' }}>+ Create League</Text>
+              </Pressable>
+            )}
           </View>
         }
         renderItem={({ item }) => (
