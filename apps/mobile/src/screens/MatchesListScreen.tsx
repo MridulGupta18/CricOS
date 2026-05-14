@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { matchesApi } from '@/lib/api';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { C, F, R, S } from '@/lib/theme';
 
 function useT() { return C; }
@@ -149,11 +150,15 @@ export function MatchesListScreen() {
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} tintColor={C.blue} />}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingVertical: 60 }}>
-            <Text style={{ fontSize: 40, marginBottom: S.lg }}>🏏</Text>
-            <Text style={{ fontFamily: F.semi, fontSize: 16, color: C.text }}>No {filter === 'All' ? '' : filter.toLowerCase()} matches</Text>
-            <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textSub, marginTop: S.sm }}>Check back soon</Text>
-          </View>
+          isLoading ? null : (
+            <EmptyState
+              icon="🏏"
+              title={`No ${filter === 'All' ? '' : filter.toLowerCase() + ' '}matches yet`}
+              description="Start scoring your first match or check back when others go live."
+              ctaLabel="+ New Match"
+              onPressCta={() => router.push('/match/new')}
+            />
+          )
         }
       />
 

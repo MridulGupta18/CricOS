@@ -1,17 +1,23 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthUser } from '@cricket-os/shared';
+import { secureStorage } from '@/lib/secureStore';
 
-// Using AsyncStorage for Expo Go compatibility.
-// Switch to react-native-mmkv in a development/production build for better perf.
+// Tokens live in the device keychain (Keychain on iOS, Keystore on Android)
+// via expo-secure-store. Other app state (region, scoring overrides) lives
+// in AsyncStorage — secure-store has a 2 KiB-per-value soft limit that we
+// don't want to brush up against for general state.
+
+export interface AuthUserState extends AuthUser {
+  isVerified?: boolean;
+}
 
 interface AuthStore {
-  user: AuthUser | null;
+  user: AuthUserState | null;
   accessToken: string | null;
   refreshToken: string | null;
   isAuthenticated: boolean;
-  setUser: (user: AuthUser) => void;
+  setUser: (user: AuthUserState) => void;
   setTokens: (access: string, refresh: string) => void;
   logout: () => void;
 }
@@ -30,7 +36,7 @@ export const useAuthStore = create<AuthStore>()(
     }),
     {
       name: 'cricket-os-auth',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => secureStorage),
     }
   )
 );

@@ -226,10 +226,21 @@ export function ScorerScreen({ matchId }: Props) {
   const wicketSheetRef  = useRef<BottomSheet>(null);
   const pickerSheetRef  = useRef<BottomSheet>(null);
 
+  // Socket.IO connection state — when connected we lean on events for
+  // realtime updates and stop polling. Polling is only a fallback for the
+  // brief windows between connect/disconnect.
+  const [socketConnected, setSocketConnected] = useState(false);
+
   // Join the match Socket.IO room for live updates
   useEffect(() => {
     const socket = connectSocket(accessToken ?? undefined);
     joinMatchRoom(matchId);
+
+    const onConnect    = () => setSocketConnected(true);
+    const onDisconnect = () => setSocketConnected(false);
+    socket.on('connect',    onConnect);
+    socket.on('disconnect', onDisconnect);
+    setSocketConnected(socket.connected);
 
     const onBallScored = () => queryClient.invalidateQueries({ queryKey: ['scorecard-scorer', matchId] });
 
@@ -266,6 +277,8 @@ export function ScorerScreen({ matchId }: Props) {
     socket.on('ball:scored', onBallScored);
     socket.on('innings:complete', onInningsComplete);
     return () => {
+      socket.off('connect',    onConnect);
+      socket.off('disconnect', onDisconnect);
       socket.off('ball:scored', onBallScored);
       socket.off('innings:complete', onInningsComplete);
       leaveMatchRoom(matchId);
@@ -296,7 +309,10 @@ export function ScorerScreen({ matchId }: Props) {
   const { data: scorecardData, refetch } = useQuery({
     queryKey: ['scorecard-scorer', matchId],
     queryFn:  () => scoringApi.getScorecard(matchId),
-    refetchInterval: 5000,
+    // When the socket is live, ball events invalidate the query directly so
+    // there's no need to poll. Fall back to a slow 30s poll only when the
+    // socket is down (e.g. offline scoring with intermittent connectivity).
+    refetchInterval: socketConnected ? false : 30_000,
   });
 
   const match        = scorecardData?.data?.data?.match;

@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { playersApi } from '@/lib/api';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { C, F, R, S } from '@/lib/theme';
 
 const ROLES = [
@@ -110,11 +111,13 @@ export function PlayersScreen() {
             </Text>
           }
           ListEmptyComponent={
-            <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-              <Text style={{ fontSize: 36, marginBottom: S.md }}>👥</Text>
-              <Text style={{ fontFamily: F.semi, fontSize: 15, color: C.text }}>No players found</Text>
-              <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted, marginTop: 6 }}>Register players to see them here</Text>
-            </View>
+            <EmptyState
+              icon="👥"
+              title={q.trim() ? `No players match "${q.trim()}"` : 'No players yet'}
+              description={q.trim() ? 'Try a different search or filter.' : 'Register players to see them here.'}
+              ctaLabel={q.trim() ? undefined : '+ Register Player'}
+              onPressCta={q.trim() ? undefined : () => router.push('/players/create')}
+            />
           }
           renderItem={({ item }) => {
             const sv = statValue(item);
