@@ -9,6 +9,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
 import { useAuthStore } from '@/stores/authStore';
 import { initNetworkListener } from '@/offline/syncWorker';
+import { useRefreshUserOnFocus } from '@/hooks/useRefreshUserOnFocus';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -29,11 +30,14 @@ const queryClient = new QueryClient({
 });
 
 // Redirects unauthenticated users to onboarding and authenticated users away from it.
+// Also refreshes the cached user object on every foreground transition so role
+// changes (e.g. admin promotion) take effect without a fresh sign-in.
 function AuthGate() {
   const router = useRouter();
   const segments = useSegments();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [hydrated, setHydrated] = useState(false);
+  useRefreshUserOnFocus();
 
   // Wait for zustand-persist to finish reading from AsyncStorage
   useEffect(() => {
@@ -101,8 +105,9 @@ export default function RootLayout() {
             <Stack.Screen name="team/create" options={{ presentation: 'modal' }} />
             <Stack.Screen name="team/[id]" options={{ presentation: 'card' }} />
             <Stack.Screen name="players/create" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="auth/register" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="auth/login" options={{ presentation: 'card' }} />
+            <Stack.Screen name="auth/register" options={{ presentation: 'card' }} />
+            <Stack.Screen name="auth/forgot" options={{ presentation: 'card' }} />
             <Stack.Screen name="search" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen name="player/[id]" options={{ presentation: 'card' }} />
           </Stack>
