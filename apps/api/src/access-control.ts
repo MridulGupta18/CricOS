@@ -172,12 +172,16 @@ export const ROLE_HIERARCHY: UserRole[] = [
 // ─── HELPERS ─────────────────────────────────────────────────
 
 /**
- * Returns true if `role` is allowed to perform `action`.
- * MASTER always returns true (master:all).
+ * Returns true if `role` is allowed to perform `action`. Higher roles inherit
+ * every action granted to lower roles in the hierarchy.
+ *
+ * MASTER → ADMIN → ORGANIZER → SCORER → PLAYER → VIEWER.
+ * MASTER is also short-circuited (it carries the master:all flag).
  */
 export function can(role: UserRole, action: Action): boolean {
   if (role === 'MASTER') return true;
-  return ROLE_PERMISSIONS[role]?.includes(action) ?? false;
+  const rolesAtOrBelow = ROLE_HIERARCHY.slice(ROLE_HIERARCHY.indexOf(role));
+  return rolesAtOrBelow.some((r) => ROLE_PERMISSIONS[r]?.includes(action));
 }
 
 /**
@@ -188,11 +192,15 @@ export function atLeast(role: UserRole, minimum: UserRole): boolean {
 }
 
 /**
- * Returns all actions allowed for a role (including inherited ones).
+ * Returns all actions allowed for a role (including inherited ones from
+ * lower roles in the hierarchy).
  */
 export function permissionsFor(role: UserRole): Action[] {
-  if (role === 'MASTER') return Object.keys(ROLE_PERMISSIONS).flatMap(r => ROLE_PERMISSIONS[r as UserRole]);
-  return ROLE_PERMISSIONS[role] ?? [];
+  if (role === 'MASTER') {
+    return Array.from(new Set(Object.values(ROLE_PERMISSIONS).flat()));
+  }
+  const rolesAtOrBelow = ROLE_HIERARCHY.slice(ROLE_HIERARCHY.indexOf(role));
+  return Array.from(new Set(rolesAtOrBelow.flatMap((r) => ROLE_PERMISSIONS[r] ?? [])));
 }
 
 /**

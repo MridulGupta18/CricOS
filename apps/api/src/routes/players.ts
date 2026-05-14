@@ -6,6 +6,10 @@ import { validate } from '../middleware/validate';
 
 export const playersRouter = Router();
 
+// `userId` is accepted in the body but enforced server-side:
+//   - ADMIN/MASTER may set userId to link a Player to any user (used by seed/admin tooling).
+//   - All other roles have userId forced to their own caller id; any client-supplied value is ignored.
+// This prevents a logged-in user from claiming another account's player profile.
 const createPlayerSchema = z.object({
   name: z.string().min(2).max(100),
   jerseyNumber: z.number().int().min(0).max(999).optional(),
@@ -15,7 +19,7 @@ const createPlayerSchema = z.object({
   city: z.string().optional(),
   country: z.string().default('India'),
   dateOfBirth: z.string().datetime().optional(),
-  userId: z.string().cuid().optional().nullable(), // link to a user account for scorer eligibility
+  userId: z.string().cuid().optional().nullable(),
 });
 
 // GET /api/v1/players — paginated list with optional role/search filters
@@ -240,16 +244,42 @@ playersRouter.get('/:id/stats', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/v1/players
+// POST /api/v1/players — create a Player profile.
+// For non-admin callers: userId is forced from the JWT (cannot link to another user).
+// For ADMIN/MASTER: userId from body is honored (allows seed scripts + admin tooling).
 playersRouter.post('/', requireAuth, requirePermission('player:create'), validate(createPlayerSchema), async (req: AuthRequest, res, next) => {
   try {
-    const player = await prisma.player.create({ data: req.body });
+    const isPrivileged = req.user!.role === 'ADMIN' || req.user!.role === 'MASTER';
+    const { userId: bodyUserId, ...rest } = req.body;
+    const linkedUserId = isPrivileged ? (bodyUserId ?? null) : req.user!.id;
+
+    // Enforce one Player per User
+    if (linkedUserId) {
+      const existing = await prisma.player.findUnique({ where: { userId: linkedUserId }, select: { id: true } });
+      if (existing) {
+        return res.status(409).json({
+          success: false,
+          error: {
+            code: 'PROFILE_EXISTS',
+            message: isPrivileged
+              ? 'That user already has a player profile.'
+              : 'You already have a player profile; edit it instead.',
+          },
+        });
+      }
+    }
+
+    const player = await prisma.player.create({
+      data: { ...rest, userId: linkedUserId },
+    });
     res.status(201).json({ success: true, data: player });
   } catch (err) { next(err); }
 });
 
-// PATCH /api/v1/players/:id
-playersRouter.patch('/:id', requireAuth, requirePermission('player:update'), validate(createPlayerSchema.partial()), async (req: AuthRequest, res, next) => {
+// PATCH /api/v1/players/:id — edit own profile (or any, if ADMIN/MASTER).
+// Strip `userId` from the body even if a client sends one — the link cannot be transferred.
+const updatePlayerSchema = createPlayerSchema.partial();
+playersRouter.patch('/:id', requireAuth, requirePermission('player:update'), validate(updatePlayerSchema), async (req: AuthRequest, res, next) => {
   try {
     const existing = await prisma.player.findUnique({ where: { id: req.params.id }, select: { userId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Player not found' } });

@@ -6,6 +6,8 @@ import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth'
 import { validate } from '../middleware/validate';
 import { computeInningsState, validateBallEvent, calculateDLSTarget } from '@cricket-os/scoring-engine';
 import { io } from '../index';
+import { canModifyMatchFromRecord } from '../lib/ownership';
+import { logger } from '../lib/logger';
 import type { BallEvent } from '@cricket-os/shared';
 
 export const scoringRouter = Router();
@@ -107,8 +109,7 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
 
     // Only the match creator, assigned scorer, or ADMIN/MASTER may score
-    const uid = req.user!.id;
-    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (!canModifyMatchFromRecord(match, req.user!)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or assigned scorer can score this match' } });
     }
 
@@ -220,11 +221,12 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
           totalWickets:   wicket ? { increment: 1 } : undefined,
           completedOvers: didCompleteOver ? { increment: 1 } : undefined,
           extraBalls:     didCompleteOver ? 0 : newLegalBalls,
-          extrasWides:    extraType === 'WIDE'    ? { increment: extraRuns } : undefined,
-          extrasNoBalls:  extraType === 'NO_BALL' ? { increment: extraRuns } : undefined,
-          extrasByes:     extraType === 'BYE'     ? { increment: extraRuns } : undefined,
-          extrasLegByes:  extraType === 'LEG_BYE' ? { increment: extraRuns } : undefined,
-          isCompleted:    inningsNowComplete,
+          extrasWides:     extraType === 'WIDE'    ? { increment: extraRuns } : undefined,
+          extrasNoBalls:   extraType === 'NO_BALL' ? { increment: extraRuns } : undefined,
+          extrasByes:      extraType === 'BYE'     ? { increment: extraRuns } : undefined,
+          extrasLegByes:   extraType === 'LEG_BYE' ? { increment: extraRuns } : undefined,
+          extrasPenalties: extraType === 'PENALTY' ? { increment: extraRuns } : undefined,
+          isCompleted:     inningsNowComplete,
         },
       });
 
@@ -319,9 +321,13 @@ scoringRouter.post('/ball', requireAuth, requirePermission('match:score'), valid
       inningsComplete: inningsNowComplete,
     });
 
-    // Recompute career stats for involved players after match finishes (fire-and-forget)
+    // Recompute career stats for involved players after match finishes.
+    // Fire-and-forget by design (we don't want to block the scorer), but errors
+    // are logged so a silent recompute failure shows up in observability.
     if (inningsNowComplete && innings.inningsNumber >= 2) {
-      recomputeCareerStatsForMatch(innings.matchId).catch(() => {});
+      recomputeCareerStatsForMatch(innings.matchId).catch((err) => {
+        logger.error({ err, matchId: innings.matchId }, 'recomputeCareerStatsForMatch failed');
+      });
     }
 
     res.status(201).json({ success: true, data: { ballEvent, isFreeHit, inningsComplete: inningsNowComplete } });
@@ -335,15 +341,12 @@ scoringRouter.delete('/ball/:ballId', requireAuth, requirePermission('match:scor
       where: { id: req.params.ballId, deletedAt: null },
       include: { innings: true, wicket: true },
     });
-    if (ball) {
-      // Only the match creator, assigned scorer, or ADMIN/MASTER can undo
-      const match = await prisma.match.findUnique({ where: { id: ball.matchId }, select: { creatorId: true, scorerId: true } });
-      const uid = req.user!.id;
-      if (match && match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
-        return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or scorer can undo a ball' } });
-      }
-    }
     if (!ball) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Ball event not found' } });
+    // Only the match creator, assigned scorer, or ADMIN/MASTER can undo.
+    const match = await prisma.match.findUnique({ where: { id: ball.matchId }, select: { creatorId: true, scorerId: true } });
+    if (!match || !canModifyMatchFromRecord(match, req.user!)) {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or scorer can undo a ball' } });
+    }
 
     // Must be the last non-deleted ball of this innings
     const lastBall = await prisma.ballEvent.findFirst({
@@ -365,11 +368,12 @@ scoringRouter.delete('/ball/:ballId', requireAuth, requirePermission('match:scor
         data: {
           totalRuns:     { decrement: ball.runs + ball.extraRuns },
           totalWickets:  ball.isWicket ? { decrement: 1 } : undefined,
-          extrasWides:   ball.extraType === 'WIDE'    ? { decrement: ball.extraRuns } : undefined,
-          extrasNoBalls: ball.extraType === 'NO_BALL' ? { decrement: ball.extraRuns } : undefined,
-          extrasByes:    ball.extraType === 'BYE'     ? { decrement: ball.extraRuns } : undefined,
-          extrasLegByes: ball.extraType === 'LEG_BYE' ? { decrement: ball.extraRuns } : undefined,
-          isCompleted:   wasComplete ? false : undefined,
+          extrasWides:     ball.extraType === 'WIDE'    ? { decrement: ball.extraRuns } : undefined,
+          extrasNoBalls:   ball.extraType === 'NO_BALL' ? { decrement: ball.extraRuns } : undefined,
+          extrasByes:      ball.extraType === 'BYE'     ? { decrement: ball.extraRuns } : undefined,
+          extrasLegByes:   ball.extraType === 'LEG_BYE' ? { decrement: ball.extraRuns } : undefined,
+          extrasPenalties: ball.extraType === 'PENALTY' ? { decrement: ball.extraRuns } : undefined,
+          isCompleted:     wasComplete ? false : undefined,
         },
       });
 
@@ -395,8 +399,7 @@ scoringRouter.post('/matches/:matchId/super-over', requireAuth, requirePermissio
     });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
     // Only creator, assigned scorer, ADMIN or MASTER can start a super over
-    const uid = req.user!.id;
-    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (!canModifyMatchFromRecord(match, req.user!)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or scorer can start a super over' } });
     }
     if (match.status !== 'COMPLETED') return res.status(422).json({ success: false, error: { code: 'NOT_COMPLETE', message: 'Match must be completed (tied) to start a super over' } });

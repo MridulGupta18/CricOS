@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { prisma } from '@cricket-os/db';
 import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
+import { canModifyMatchFromRecord, isPrivileged } from '../lib/ownership';
 
 export const matchesRouter = Router();
 
@@ -176,8 +177,7 @@ matchesRouter.patch('/:id/toss', requireAuth, requirePermission('match:set_toss'
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
-    const uid = req.user!.id;
-    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (!canModifyMatchFromRecord(match, req.user!)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or assigned scorer can set the toss' } });
     }
     const { tossWinnerId, tossDecision } = req.body;
@@ -191,12 +191,11 @@ matchesRouter.patch('/:id/toss', requireAuth, requirePermission('match:set_toss'
 });
 
 // PATCH /api/v1/matches/:id/result — set match result
-matchesRouter.patch('/:id/result', requireAuth, validate(resultSchema), async (req: AuthRequest, res, next) => {
+matchesRouter.patch('/:id/result', requireAuth, requirePermission('match:set_result'), validate(resultSchema), async (req: AuthRequest, res, next) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true, scorerId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
-    const uid = req.user!.id;
-    if (match.creatorId !== uid && match.scorerId !== uid && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (!canModifyMatchFromRecord(match, req.user!)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or assigned scorer can set the result' } });
     }
     const { winnerId, resultType, winMargin, winMarginType } = req.body;
@@ -209,12 +208,12 @@ matchesRouter.patch('/:id/result', requireAuth, validate(resultSchema), async (r
   } catch (err) { next(err); }
 });
 
-// DELETE /api/v1/matches/:id
+// DELETE /api/v1/matches/:id — match creator or admin only (NOT scorer)
 matchesRouter.delete('/:id', requireAuth, async (req: AuthRequest, res, next) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id }, select: { creatorId: true } });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
-    if (match.creatorId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (match.creatorId !== req.user!.id && !isPrivileged(req.user!.role)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator can delete this match' } });
     }
     await prisma.match.delete({ where: { id: req.params.id } });
@@ -237,14 +236,7 @@ matchesRouter.patch('/:id/scorer', requireAuth, validate(assignScorerSchema), as
     });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
 
-    const uid = req.user!.id;
-    const isAuthorised =
-      match.creatorId === uid ||
-      match.scorerId  === uid ||
-      req.user!.role === 'ADMIN' ||
-      req.user!.role === 'MASTER';
-
-    if (!isAuthorised) {
+    if (!canModifyMatchFromRecord(match, req.user!)) {
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Only the match creator or current scorer can reassign the scorer' },
@@ -300,11 +292,7 @@ matchesRouter.get('/:id/eligible-scorers', requireAuth, async (req: AuthRequest,
     });
     if (!match) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Match not found' } });
 
-    const uid = req.user!.id;
-    const isAuthorised =
-      match.creatorId === uid || match.scorerId === uid ||
-      req.user!.role === 'ADMIN' || req.user!.role === 'MASTER';
-    if (!isAuthorised) {
+    if (!canModifyMatchFromRecord(match, req.user!)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the match creator or scorer can view eligible scorers' } });
     }
 
