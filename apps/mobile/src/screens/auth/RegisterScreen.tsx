@@ -10,9 +10,12 @@ import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, F, R, S } from '@/lib/theme';
 
-// Public URLs for the terms + privacy policy. Replace with real URLs before launch.
-const TERMS_URL   = 'https://crivos.app/terms';
-const PRIVACY_URL = 'https://crivos.app/privacy';
+// Public URLs for the terms + privacy policy.
+// Env-driven so the URLs can be updated without shipping a new app build —
+// critical because App Store/Play Store reviewers tap these during submission
+// and any broken link rejects the build. Defaults match the production brand.
+const TERMS_URL   = process.env.EXPO_PUBLIC_TERMS_URL   ?? 'https://crivos.app/terms';
+const PRIVACY_URL = process.env.EXPO_PUBLIC_PRIVACY_URL ?? 'https://crivos.app/privacy';
 
 // ── Password rules ───────────────────────────────────────────
 
