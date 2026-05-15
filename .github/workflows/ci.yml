@@ -31,10 +31,14 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # `npm install` (not `npm ci`) so the OS-specific optional deps for
-        # rollup/Vite get materialised on Linux even when the lock file was
-        # generated on a non-Linux host. See https://github.com/npm/cli/issues/4828.
-        run: npm install --legacy-peer-deps
+        # The committed package-lock.json was generated on Windows, which
+        # omits OS-specific optional deps that rollup/Vite need on Linux
+        # (e.g. @rollup/rollup-linux-x64-gnu). See npm/cli#4828.
+        # We rebuild the lock from scratch in CI so the right native binaries
+        # are resolved for the runner. Local installs keep their lock file.
+        run: |
+          rm -f package-lock.json
+          npm install --legacy-peer-deps
 
       - name: Generate Prisma client
         run: npx prisma generate --schema=packages/db/prisma/schema.prisma
