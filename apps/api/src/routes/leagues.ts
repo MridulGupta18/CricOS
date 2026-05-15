@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@cricket-os/db';
 import { requireAuth, requireRole, requirePermission, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
+import { canModifyLeague, isPrivileged } from '../lib/ownership';
 
 export const leaguesRouter = Router();
 
@@ -24,6 +25,7 @@ const createLeagueSchema = z.object({
 });
 
 const updateLeagueSchema = createLeagueSchema.partial();
+const registerTeamSchema = z.object({ teamId: z.string().cuid() });
 
 const leagueSelect = {
   id: true, name: true, slug: true, description: true, logoUrl: true, bannerUrl: true,
@@ -95,7 +97,7 @@ leaguesRouter.patch('/:id', requireAuth, requirePermission('league:update'), val
   try {
     const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
-    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (existing.organizerId !== req.user!.id && !isPrivileged(req.user!.role)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can edit this league' } });
     }
     const league = await prisma.league.update({
@@ -112,7 +114,7 @@ leaguesRouter.patch('/:id/status', requireAuth, requirePermission('league:set_st
   try {
     const existing = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
-    if (existing.organizerId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (existing.organizerId !== req.user!.id && !isPrivileged(req.user!.role)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can change the league status' } });
     }
     const { status } = req.body;
@@ -126,17 +128,16 @@ leaguesRouter.patch('/:id/status', requireAuth, requirePermission('league:set_st
 });
 
 // POST /api/v1/leagues/:id/teams — register a team
-leaguesRouter.post('/:id/teams', requireAuth, requirePermission('league:register_team'), async (req: AuthRequest, res, next) => {
+leaguesRouter.post('/:id/teams', requireAuth, requirePermission('league:register_team'), validate(registerTeamSchema), async (req: AuthRequest, res, next) => {
   try {
     const { teamId } = req.body;
-    if (!teamId) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'teamId required' } });
 
     const league = await prisma.league.findUnique({ where: { id: req.params.id } });
     if (!league) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });
 
     // Caller must be the league organizer, ADMIN, MASTER, or a captain/VC in the registering team
     const uid = req.user!.id;
-    const isLeagueAdmin = league.organizerId === uid || req.user!.role === 'ADMIN' || req.user!.role === 'MASTER';
+    const isLeagueAdmin = league.organizerId === uid || isPrivileged(req.user!.role);
     if (!isLeagueAdmin) {
       const captaincy = await prisma.teamMember.findFirst({
         where: {
@@ -259,7 +260,7 @@ leaguesRouter.get('/:id/revenue', requireAuth, requirePermission('league:view_re
   try {
     // Ownership check: only the league organizer or admin can view revenue
     const leagueOwner = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
-    if (leagueOwner && leagueOwner.organizerId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (leagueOwner && leagueOwner.organizerId !== req.user!.id && !isPrivileged(req.user!.role)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can view revenue' } });
     }
     const [payments, league] = await Promise.all([
@@ -318,7 +319,7 @@ leaguesRouter.get('/:id/bracket', async (req, res, next) => {
 leaguesRouter.post('/:id/bracket', requireAuth, requirePermission('league:manage_bracket'), async (req: AuthRequest, res, next) => {
   try {
     const leagueOwner = await prisma.league.findUnique({ where: { id: req.params.id }, select: { organizerId: true } });
-    if (leagueOwner && leagueOwner.organizerId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    if (leagueOwner && leagueOwner.organizerId !== req.user!.id && !isPrivileged(req.user!.role)) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Only the league organizer can manage the bracket' } });
     }
     const { stages } = req.body as { stages: { name: string; stageType: string; stageOrder: number; teamsAdvance: number }[] };

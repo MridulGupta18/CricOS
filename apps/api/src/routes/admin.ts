@@ -11,11 +11,17 @@ export const adminRouter = Router();
 
 // ─── MASTER BOOTSTRAP ────────────────────────────────────────
 // POST /api/v1/admin/bootstrap
-// One-time endpoint: promotes guptamridul1997@gmail.com to MASTER.
-// Blocked if a MASTER account already exists.
+// One-time endpoint: promotes the account at MASTER_EMAIL (env var) to MASTER.
+// Blocked if a MASTER account already exists or if MASTER_EMAIL is unset.
 
-adminRouter.post('/bootstrap', async (req, res, next) => {
+adminRouter.post('/bootstrap', async (_req, res, next) => {
   try {
+    if (!MASTER_EMAIL) {
+      return res.status(503).json({
+        success: false,
+        error: { code: 'NOT_CONFIGURED', message: 'MASTER_EMAIL is not set on the server.' },
+      });
+    }
     const existingMaster = await prisma.user.findFirst({ where: { role: 'MASTER' } });
     if (existingMaster) {
       return res.status(409).json({
@@ -28,14 +34,19 @@ adminRouter.post('/bootstrap', async (req, res, next) => {
     if (!targetUser) {
       return res.status(404).json({
         success: false,
-        error: { code: 'NOT_FOUND', message: `No account found for ${MASTER_EMAIL} — register first` },
+        error: { code: 'NOT_FOUND', message: 'No account found for the configured master email — register first.' },
       });
     }
 
-    await prisma.user.update({ where: { email: MASTER_EMAIL }, data: { role: 'MASTER' } });
+    await prisma.user.update({
+      where: { email: MASTER_EMAIL },
+      // Bump tokenVersion so any existing tokens for this account
+      // immediately gain the new role on next refresh.
+      data:  { role: 'MASTER', tokenVersion: { increment: 1 } },
+    });
     return res.json({
       success: true,
-      data: { message: `${MASTER_EMAIL} promoted to MASTER`, email: MASTER_EMAIL },
+      data: { message: 'Master account promoted.' },
     });
   } catch (err) { next(err); }
 });
@@ -117,11 +128,17 @@ adminRouter.patch('/users/:id/role', requireAuth, requirePermission('admin:set_r
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Cannot demote the master account email' } });
     }
 
+    // Bump tokenVersion to invalidate the target's outstanding access tokens.
+    // Their next API call on the old token will succeed (15-min cap), but their
+    // next refresh attempt will be rejected with TOKEN_REVOKED, forcing fresh
+    // sign-in with the new role baked into the JWT payload.
     const updated = await prisma.user.update({
       where: { id: req.params.id },
-      data: { role: newRole },
+      data: { role: newRole, tokenVersion: { increment: 1 } },
       select: { id: true, email: true, name: true, role: true },
     });
+    // Also revoke all currently-stored refresh tokens for clarity.
+    await prisma.refreshToken.deleteMany({ where: { userId: req.params.id } });
     res.json({ success: true, data: updated });
   } catch (err) { next(err); }
 });

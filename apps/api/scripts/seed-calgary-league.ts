@@ -5,15 +5,15 @@
  * Every record is created the same way a real user would create it through the app.
  *
  * Usage:
- *   npx tsx scripts/seed-calgary-league.ts
- *   npx tsx scripts/seed-calgary-league.ts --api https://your-railway-url.up.railway.app
- *   npx tsx scripts/seed-calgary-league.ts --master-password yourpassword
+ *   SEED_MASTER_EMAIL=... MASTER_PASSWORD=... npx tsx scripts/seed-calgary-league.ts
+ *   npx tsx scripts/seed-calgary-league.ts --api https://your-railway-url.up.railway.app \
+ *     --master-email you@example.com --master-password yourpassword
  *
  * Prerequisites:
  *   1. API is running (local or deployed)
- *   2. guptamridul1997@gmail.com is registered and has MASTER role
- *      (run POST /api/v1/admin/bootstrap if needed)
- *   3. Set MASTER_PASSWORD env var or pass --master-password flag
+ *   2. The master account is registered and has MASTER role
+ *      (run POST /api/v1/admin/bootstrap after registration)
+ *   3. Provide credentials via --master-email/--master-password or env vars.
  */
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -25,8 +25,13 @@ const get = (flag: string, fallback = '') => {
 };
 
 const API_BASE = get('--api', process.env.SEED_API_URL ?? 'http://localhost:4000') + '/api/v1';
-const MASTER_EMAIL = 'guptamridul1997@gmail.com';
-const MASTER_PASS  = get('--master-password', process.env.MASTER_PASSWORD ?? 'Cricket@2025!');
+const MASTER_EMAIL = get('--master-email', process.env.SEED_MASTER_EMAIL ?? '');
+const MASTER_PASS  = get('--master-password', process.env.MASTER_PASSWORD ?? '');
+
+if (!MASTER_EMAIL || !MASTER_PASS) {
+  console.error('✗ Missing credentials. Set SEED_MASTER_EMAIL + MASTER_PASSWORD env vars or pass --master-email/--master-password.');
+  process.exit(1);
+}
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
@@ -198,6 +203,7 @@ async function main() {
     const regRes = await post<any>('/auth/register', {
       email: orgEmail, password: 'Organizer@Calgary2025!',
       name: 'Calgary Cricket Association', role: 'VIEWER',
+      acceptedTerms: true,
     });
     if (regRes.data?.user) {
       log('  ✓', `Registered organizer: ${regRes.data.user.id}`);
@@ -245,6 +251,7 @@ async function main() {
       const r = await post<any>('/auth/register', {
         email: player.email, password: 'Player@Calgary2025!',
         name: player.name, role: 'PLAYER',
+        acceptedTerms: true,
       });
       if (r.data?.user) {
         userIdByEmail[player.email] = r.data.user.id;

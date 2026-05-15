@@ -27,26 +27,48 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Bumped when a user's role changes or they force-logout; invalidates outstanding JWTs.
+  tokenVersion Int      @default(0)
+  // Email verification state — gates promotion to ORGANIZER+ and certain write actions.
+  verificationToken     String?  @unique
+  verificationExpiresAt DateTime?
+  passwordResetToken    String?  @unique
+  passwordResetExpiresAt DateTime?
+  lastLoginAt           DateTime?
+  failedLoginCount      Int      @default(0)
+  lockedUntil           DateTime?
+
   refreshTokens RefreshToken[]
   playerProfile Player?
   organizedLeagues League[]
   scoredMatches    Match[]   @relation("MatchScorer")
   createdMatches   Match[]   @relation("MatchCreator")
+  createdTeams     Team[]    @relation("TeamCreator")
   payments         Payment[]
 
+  // verificationToken and passwordResetToken have unique indexes via @unique
+  // already — no need for redundant non-unique indexes on the same columns.
   @@index([email])
 }
 
 model RefreshToken {
   id        String   @id @default(cuid())
-  token     String   @unique
+  // SHA-256 hex digest of the actual refresh token JWT. We never store the
+  // plaintext token at rest — only the digest. Verification re-hashes the
+  // presented token and looks it up by this column.
+  tokenHash String   @unique
   userId    String
   expiresAt DateTime
   createdAt DateTime @default(now())
+  // Bumped by `tokenVersion` on the user — if the user's tokens were
+  // invalidated (role change, forced logout) any token with an older
+  // version is rejected even before expiry.
+  tokenVersion Int   @default(0)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([token])
+  @@index([tokenHash])
+  @@index([userId])
 }
 
 enum UserRole {
@@ -109,9 +131,14 @@ model Team {
   logoUrl   String?
   city      String?
   country   String   @default("India")
+  // The user who created the team. They retain admin rights even after captaincy
+  // changes — this avoids races where multiple people could claim ownership of
+  // a freshly-created team. Nullable for historical rows created before this field existed.
+  creatorId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  creator        User?        @relation("TeamCreator", fields: [creatorId], references: [id])
   members        TeamMember[]
   homeMatches    Match[]      @relation("HomeTeam")
   awayMatches    Match[]      @relation("AwayTeam")
@@ -123,6 +150,7 @@ model Team {
   searchVector Unsupported("tsvector")?
 
   @@index([name])
+  @@index([creatorId])
   @@index([searchVector], type: Gin, map: "team_search_idx")
 }
 
