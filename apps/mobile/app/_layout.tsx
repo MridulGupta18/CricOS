@@ -7,9 +7,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '@/stores/authStore';
 import { initNetworkListener } from '@/offline/syncWorker';
 import { useRefreshUserOnFocus } from '@/hooks/useRefreshUserOnFocus';
+
+// One-time cleanup of the pre-secure-store auth blob.
+//
+// Earlier builds persisted auth state into AsyncStorage under the key
+// `cricket-os-auth`. We've since moved tokens to expo-secure-store (Keychain
+// / Keystore). The old AsyncStorage entry would otherwise linger on every
+// upgraded install — the tokens inside it have expired anyway, but it's
+// stale credential material we don't need on disk.
+const _legacyAuthCleanup = AsyncStorage.removeItem('cricket-os-auth').catch(() => {});
 
 SplashScreen.preventAutoHideAsync();
 

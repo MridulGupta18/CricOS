@@ -4,8 +4,13 @@ import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { matchesApi } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { C, F, R, S } from '@/lib/theme';
+
+// VIEWER + unauthenticated users have no match:create permission, so we hide
+// the "+ New Match" affordance for them rather than show a 403 after they tap.
+const CAN_CREATE_MATCH = new Set(['PLAYER', 'SCORER', 'ORGANIZER', 'ADMIN', 'MASTER']);
 
 function useT() { return C; }
 function resultText(m: any) {
@@ -97,6 +102,8 @@ function MatchRow({ m, t, onPress }: { m: any; t: any; onPress: () => void }) {
 export function MatchesListScreen() {
   const t = useT(); const router = useRouter(); const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<Filter>('All');
+  const userRole = useAuthStore((s) => s.user?.role);
+  const canCreateMatch = !!userRole && CAN_CREATE_MATCH.has(userRole);
   const { data, isLoading, refetch } = useQuery({ queryKey: ['matches'], queryFn: () => matchesApi.list({ limit: '50' }) });
   const all: any[] = data?.data?.data ?? [];
   const filtered = filter === 'All' ? all
@@ -154,27 +161,33 @@ export function MatchesListScreen() {
             <EmptyState
               icon="🏏"
               title={`No ${filter === 'All' ? '' : filter.toLowerCase() + ' '}matches yet`}
-              description="Start scoring your first match or check back when others go live."
-              ctaLabel="+ New Match"
-              onPressCta={() => router.push('/match/new')}
+              description={canCreateMatch
+                ? 'Start scoring your first match or check back when others go live.'
+                : 'Check back when matches go live.'}
+              ctaLabel={canCreateMatch ? '+ New Match' : undefined}
+              onPressCta={canCreateMatch ? () => router.push('/match/new') : undefined}
             />
           )
         }
       />
 
-      {/* FAB */}
-      <Pressable
-        onPress={() => router.push('/match/new')}
-        style={({ pressed }) => ({
-          position: 'absolute', bottom: insets.bottom + 24, right: S.xl,
-          backgroundColor: C.primary, borderRadius: R.full, width: 56, height: 56,
-          alignItems: 'center', justifyContent: 'center',
-          shadowColor: C.primary, shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
-          elevation: 10, opacity: pressed ? 0.85 : 1,
-        })}
-      >
-        <Text style={{ fontSize: 24, color: '#fff', lineHeight: 28 }}>+</Text>
-      </Pressable>
+      {/* FAB — hidden for VIEWER and unauthenticated users (no match:create). */}
+      {canCreateMatch && (
+        <Pressable
+          onPress={() => router.push('/match/new')}
+          accessibilityRole="button"
+          accessibilityLabel="Create a new match"
+          style={({ pressed }) => ({
+            position: 'absolute', bottom: insets.bottom + 24, right: S.xl,
+            backgroundColor: C.primary, borderRadius: R.full, width: 56, height: 56,
+            alignItems: 'center', justifyContent: 'center',
+            shadowColor: C.primary, shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+            elevation: 10, opacity: pressed ? 0.85 : 1,
+          })}
+        >
+          <Text style={{ fontSize: 24, color: '#fff', lineHeight: 28 }}>+</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
