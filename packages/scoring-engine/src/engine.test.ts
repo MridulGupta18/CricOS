@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   computeInningsState,
   validateBallEvent,
@@ -15,7 +15,10 @@ import type { BallEvent, ExtraType, WicketType } from '@cricket-os/shared';
 // for how the engine handles cricket rules: strike rotation, extras,
 // boundaries, wickets, free hits, partnerships, maidens.
 
+// Module-scoped sequence counter — explicitly reset before each test so
+// rawBallNumber assertions remain deterministic regardless of describe order.
 let seq = 0;
+beforeEach(() => { seq = 0; });
 function ball(partial: Partial<BallEvent>): BallEvent {
   seq++;
   return {

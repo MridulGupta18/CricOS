@@ -12,6 +12,14 @@ describe('access-control — can()', () => {
     expect(can('MASTER', 'league:create')).toBe(true);
   });
 
+  it('MASTER short-circuit covers actions that no role explicitly lists', () => {
+    // The short-circuit at the top of can() is what makes "MASTER can do
+    // anything" actually true. Without it, a brand-new action not yet wired
+    // up to any role would fail for MASTER too — which we never want.
+    // Pin this with a synthetic action string the role map doesn't contain.
+    expect(can('MASTER', 'some-future-action-not-in-the-map' as any)).toBe(true);
+  });
+
   it('ADMIN inherits ORGANIZER actions via the hierarchy', () => {
     // ORGANIZER explicitly has league:set_status; ADMIN should inherit it.
     expect(can('ADMIN', 'league:set_status')).toBe(true);
