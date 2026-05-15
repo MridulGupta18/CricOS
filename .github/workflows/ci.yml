@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Type-check, test & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Required at module-load time for the API. CI-only — never use these
+      # in production. Generated once and pinned so tests are deterministic.
+      JWT_SECRET: ci-test-secret-not-for-production-use-only
+      REFRESH_TOKEN_SECRET: ci-test-refresh-not-for-production-use-only
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        # The committed package-lock.json was generated on Windows, which
+        # omits OS-specific optional deps that rollup/Vite need on Linux
+        # (e.g. @rollup/rollup-linux-x64-gnu). See npm/cli#4828.
+        # We rebuild the lock from scratch in CI so the right native binaries
+        # are resolved for the runner. Local installs keep their lock file.
+        run: |
+          rm -f package-lock.json
+          npm install --legacy-peer-deps
+
+      - name: Generate Prisma client
+        run: npx prisma generate --schema=packages/db/prisma/schema.prisma
+
+      - name: Type-check API
+        run: npm run type-check --workspace=apps/api
+
+      - name: Type-check mobile
+        # Non-blocking: the mobile workspace has pre-existing TS errors
+        # (NativeWind className prop typing + a lucide-react-native import
+        # that lacks a corresponding install). The job runs so the report
+        # is visible on every PR, but it doesn't gate the merge. Tracked
+        # for cleanup separately.
+        continue-on-error: true
+        run: npm run type-check --workspace=@cricket-os/mobile
+
+      - name: Test scoring engine
+        run: npm test --workspace=@cricket-os/scoring-engine
+
+      - name: Test API
+        run: npm test --workspace=apps/api
+
+      - name: Build API
+        run: npm run build --workspace=apps/api
