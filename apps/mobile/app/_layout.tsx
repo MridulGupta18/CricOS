@@ -7,8 +7,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Font from 'expo-font';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '@/stores/authStore';
 import { initNetworkListener } from '@/offline/syncWorker';
+import { useRefreshUserOnFocus } from '@/hooks/useRefreshUserOnFocus';
+
+// One-time cleanup of the pre-secure-store auth blob.
+//
+// Earlier builds persisted auth state into AsyncStorage under the key
+// `cricket-os-auth`. We've since moved tokens to expo-secure-store (Keychain
+// / Keystore). The old AsyncStorage entry would otherwise linger on every
+// upgraded install — the tokens inside it have expired anyway, but it's
+// stale credential material we don't need on disk.
+const _legacyAuthCleanup = AsyncStorage.removeItem('cricket-os-auth').catch(() => {});
 
 SplashScreen.preventAutoHideAsync();
 
@@ -29,11 +40,14 @@ const queryClient = new QueryClient({
 });
 
 // Redirects unauthenticated users to onboarding and authenticated users away from it.
+// Also refreshes the cached user object on every foreground transition so role
+// changes (e.g. admin promotion) take effect without a fresh sign-in.
 function AuthGate() {
   const router = useRouter();
   const segments = useSegments();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [hydrated, setHydrated] = useState(false);
+  useRefreshUserOnFocus();
 
   // Wait for zustand-persist to finish reading from AsyncStorage
   useEffect(() => {
@@ -101,8 +115,9 @@ export default function RootLayout() {
             <Stack.Screen name="team/create" options={{ presentation: 'modal' }} />
             <Stack.Screen name="team/[id]" options={{ presentation: 'card' }} />
             <Stack.Screen name="players/create" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="auth/register" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="auth/login" options={{ presentation: 'card' }} />
+            <Stack.Screen name="auth/register" options={{ presentation: 'card' }} />
+            <Stack.Screen name="auth/forgot" options={{ presentation: 'card' }} />
             <Stack.Screen name="search" options={{ presentation: 'fullScreenModal' }} />
             <Stack.Screen name="player/[id]" options={{ presentation: 'card' }} />
           </Stack>

@@ -4,7 +4,12 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { playersApi } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { C, F, R, S } from '@/lib/theme';
+
+// VIEWER has no player:create — hide the "Register Player" CTA in that case.
+const CAN_CREATE_PLAYER = new Set(['PLAYER', 'SCORER', 'ORGANIZER', 'ADMIN', 'MASTER']);
 
 const ROLES = [
   { id: 'All',           label: 'All' },
@@ -36,6 +41,8 @@ export function PlayersScreen() {
   const insets = useSafeAreaInsets();
   const [q, setQ] = useState('');
   const [role, setRole] = useState('All');
+  const userRole = useAuthStore((s) => s.user?.role);
+  const canCreatePlayer = !!userRole && CAN_CREATE_PLAYER.has(userRole);
 
   const params: Record<string, string> = { limit: '100' };
   if (role !== 'All') params.role = role;
@@ -110,11 +117,15 @@ export function PlayersScreen() {
             </Text>
           }
           ListEmptyComponent={
-            <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-              <Text style={{ fontSize: 36, marginBottom: S.md }}>👥</Text>
-              <Text style={{ fontFamily: F.semi, fontSize: 15, color: C.text }}>No players found</Text>
-              <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textMuted, marginTop: 6 }}>Register players to see them here</Text>
-            </View>
+            <EmptyState
+              icon="👥"
+              title={q.trim() ? `No players match "${q.trim()}"` : 'No players yet'}
+              description={q.trim()
+                ? 'Try a different search or filter.'
+                : canCreatePlayer ? 'Register players to see them here.' : 'Check back later.'}
+              ctaLabel={!q.trim() && canCreatePlayer ? '+ Register Player' : undefined}
+              onPressCta={!q.trim() && canCreatePlayer ? () => router.push('/players/create') : undefined}
+            />
           }
           renderItem={({ item }) => {
             const sv = statValue(item);

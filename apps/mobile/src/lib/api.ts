@@ -110,8 +110,12 @@ export const searchApi = {
 };
 
 export const authApi = {
-  login: (data: unknown) => apiClient.post('/auth/login', data),
+  login:    (data: unknown) => apiClient.post('/auth/login', data),
   register: (data: unknown) => apiClient.post('/auth/register', data),
-  me: () => apiClient.get('/auth/me'),
-  logout: () => apiClient.post('/auth/logout', {}),
+  me:       () => apiClient.get('/auth/me'),
+  logout:   (refreshToken?: string) => apiClient.post('/auth/logout', refreshToken ? { refreshToken } : {}),
+  verify:        (token: string)   => apiClient.post('/auth/verify', { token }),
+  resendVerify:  ()                => apiClient.post('/auth/verify/resend', {}),
+  forgot:        (email: string)   => apiClient.post('/auth/forgot', { email }),
+  reset:         (token: string, password: string) => apiClient.post('/auth/reset', { token, password }),
 };

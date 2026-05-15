@@ -34,7 +34,10 @@ export function ProfileScreen() {
   const { user, isAuthenticated, logout } = useAuthStore();
 
   async function handleLogout() {
-    try { await authApi.logout(); } catch {}
+    // Pass the current refresh token so the server can delete it server-side —
+    // otherwise a stolen refresh token would remain valid until expiry.
+    const refreshToken = useAuthStore.getState().refreshToken ?? undefined;
+    try { await authApi.logout(refreshToken); } catch {}
     logout();
     Toast.show({ type: 'success', text1: 'Signed out' });
   }

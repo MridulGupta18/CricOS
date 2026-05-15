@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import {
   View, Text, TextInput, Pressable, KeyboardAvoidingView,
-  Platform, ScrollView, ActivityIndicator,
+  Platform, ScrollView, ActivityIndicator, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -9,6 +9,13 @@ import Toast from 'react-native-toast-message';
 import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { C, F, R, S } from '@/lib/theme';
+
+// Public URLs for the terms + privacy policy.
+// Env-driven so the URLs can be updated without shipping a new app build —
+// critical because App Store/Play Store reviewers tap these during submission
+// and any broken link rejects the build. Defaults match the production brand.
+const TERMS_URL   = process.env.EXPO_PUBLIC_TERMS_URL   ?? 'https://crivos.app/terms';
+const PRIVACY_URL = process.env.EXPO_PUBLIC_PRIVACY_URL ?? 'https://crivos.app/privacy';
 
 // ── Password rules ───────────────────────────────────────────
 
@@ -59,6 +66,7 @@ export function RegisterScreen() {
   const [showPw,   setShowPw]   = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [pwFocused, setPwFocused] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const allRulesPassed = useMemo(() => RULES.every(r => r.test(password)), [password]);
 
@@ -77,6 +85,10 @@ export function RegisterScreen() {
       setPwFocused(true);
       return;
     }
+    if (!acceptedTerms) {
+      Toast.show({ type: 'error', text1: 'Please accept the terms and privacy policy to continue' });
+      return;
+    }
 
     setIsLoading(true);
     try {
@@ -85,10 +97,15 @@ export function RegisterScreen() {
         email: email.trim().toLowerCase(),
         phone: phone.trim() || undefined,
         password,
+        acceptedTerms: true,
       });
       setUser(data.data.user);
       setTokens(data.data.accessToken, data.data.refreshToken);
-      Toast.show({ type: 'success', text1: `Welcome, ${data.data.user.name}!` });
+      Toast.show({
+        type: 'success',
+        text1: `Welcome, ${data.data.user.name}!`,
+        text2: data.data.user.isVerified ? undefined : 'Check your email to verify your account.',
+      });
       router.replace('/(tabs)');
     } catch (err: any) {
       Toast.show({ type: 'error', text1: err?.response?.data?.error?.message ?? 'Registration failed' });
@@ -176,11 +193,44 @@ export function RegisterScreen() {
             {(pwFocused || password.length > 0) && <PasswordStrength password={password} />}
           </View>
 
+          {/* Terms + privacy consent — required for App/Play Store + GDPR */}
+          <Pressable
+            onPress={() => setAcceptedTerms((v) => !v)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: acceptedTerms }}
+            style={{ flexDirection: 'row', alignItems: 'flex-start', gap: S.sm, marginTop: S.sm, paddingVertical: 4 }}
+            hitSlop={6}
+          >
+            <View style={{
+              width: 20, height: 20, borderRadius: 5, marginTop: 2,
+              borderWidth: 2,
+              borderColor: acceptedTerms ? C.blue : C.border,
+              backgroundColor: acceptedTerms ? C.blue : 'transparent',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              {acceptedTerms && <Text style={{ fontSize: 12, color: '#fff', fontFamily: F.bold }}>✓</Text>}
+            </View>
+            <Text style={{ fontFamily: F.reg, fontSize: 13, color: C.textSub, flex: 1, lineHeight: 18 }}>
+              I agree to the{' '}
+              <Text style={{ color: C.blue, fontFamily: F.semi }} onPress={() => Linking.openURL(TERMS_URL)}>
+                Terms of Service
+              </Text>
+              {' '}and{' '}
+              <Text style={{ color: C.blue, fontFamily: F.semi }} onPress={() => Linking.openURL(PRIVACY_URL)}>
+                Privacy Policy
+              </Text>
+              .
+            </Text>
+          </Pressable>
+
           <Pressable
             onPress={register}
-            disabled={isLoading}
+            disabled={isLoading || !acceptedTerms}
+            accessibilityRole="button"
+            accessibilityLabel="Create account"
             style={({ pressed }) => ({
-              backgroundColor: C.blue, borderRadius: R.lg, paddingVertical: 15,
+              backgroundColor: acceptedTerms ? C.blue : C.border,
+              borderRadius: R.lg, paddingVertical: 15,
               alignItems: 'center', marginTop: S.sm,
               opacity: pressed || isLoading ? 0.85 : 1,
             })}

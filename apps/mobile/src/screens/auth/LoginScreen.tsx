@@ -78,12 +78,18 @@ export function LoginScreen() {
           <Pressable
             onPress={login}
             disabled={isLoading}
+            accessibilityRole="button"
+            accessibilityLabel="Sign in"
             style={({ pressed }) => ({ backgroundColor: C.blue, borderRadius: R.lg, paddingVertical: 15, alignItems: 'center', marginTop: S.sm, opacity: pressed || isLoading ? 0.85 : 1 })}
           >
             {isLoading
               ? <ActivityIndicator color="#fff" size="small" />
               : <Text style={{ fontFamily: F.bold, fontSize: 16, color: '#fff' }}>Sign In</Text>
             }
+          </Pressable>
+
+          <Pressable onPress={() => router.push('/auth/forgot' as any)} style={{ alignItems: 'center', marginTop: S.md }} hitSlop={8}>
+            <Text style={{ fontFamily: F.medium, fontSize: 13, color: C.textSub }}>Forgot password?</Text>
           </Pressable>
         </View>
 
