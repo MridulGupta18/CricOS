@@ -17,28 +17,34 @@ ALTER TABLE "User"
   ADD COLUMN IF NOT EXISTS "failedLoginCount" INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS "lockedUntil" TIMESTAMP(3);
 
+-- A unique index already serves equality lookups; no separate non-unique
+-- index is needed (and would just bloat insert/update cost).
 CREATE UNIQUE INDEX IF NOT EXISTS "User_verificationToken_key" ON "User"("verificationToken");
 CREATE UNIQUE INDEX IF NOT EXISTS "User_passwordResetToken_key" ON "User"("passwordResetToken");
-CREATE INDEX IF NOT EXISTS "User_verificationToken_idx" ON "User"("verificationToken");
-CREATE INDEX IF NOT EXISTS "User_passwordResetToken_idx" ON "User"("passwordResetToken");
 
 -- ─── TEAM ───────────────────────────────────────────────────
 ALTER TABLE "Team"
   ADD COLUMN IF NOT EXISTS "creatorId" TEXT;
 
 -- Backfill the creator from the current CAPTAIN (best-effort): for each team
--- without a creator, pick the linked user behind the active captain. Teams
--- with no captain remain null and can only be modified by ADMIN/MASTER until
--- explicitly claimed.
+-- without a creator, pick the linked user behind the EARLIEST active captain.
+-- Determinism note: the schema doesn't prevent multiple active CAPTAINS on a
+-- team, so we ORDER BY joinedAt + LIMIT 1 to make the choice reproducible.
+-- Teams with no captain remain null and can only be modified by ADMIN/MASTER
+-- until explicitly claimed.
 UPDATE "Team" t
-   SET "creatorId" = u."id"
-  FROM "TeamMember" tm
-  JOIN "Player" p ON p."id" = tm."playerId"
-  JOIN "User"   u ON u."id" = p."userId"
- WHERE tm."teamId" = t."id"
-   AND tm."isActive" = TRUE
-   AND tm."role"     = 'CAPTAIN'
-   AND t."creatorId" IS NULL;
+   SET "creatorId" = (
+     SELECT u."id"
+       FROM "TeamMember" tm
+       JOIN "Player" p ON p."id" = tm."playerId"
+       JOIN "User"   u ON u."id" = p."userId"
+      WHERE tm."teamId"   = t."id"
+        AND tm."isActive" = TRUE
+        AND tm."role"     = 'CAPTAIN'
+      ORDER BY tm."joinedAt" ASC, u."id" ASC
+      LIMIT 1
+   )
+ WHERE t."creatorId" IS NULL;
 
 CREATE INDEX IF NOT EXISTS "Team_creatorId_idx" ON "Team"("creatorId");
 

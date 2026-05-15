@@ -25,6 +25,7 @@ const createLeagueSchema = z.object({
 });
 
 const updateLeagueSchema = createLeagueSchema.partial();
+const registerTeamSchema = z.object({ teamId: z.string().cuid() });
 
 const leagueSelect = {
   id: true, name: true, slug: true, description: true, logoUrl: true, bannerUrl: true,
@@ -127,10 +128,9 @@ leaguesRouter.patch('/:id/status', requireAuth, requirePermission('league:set_st
 });
 
 // POST /api/v1/leagues/:id/teams — register a team
-leaguesRouter.post('/:id/teams', requireAuth, requirePermission('league:register_team'), async (req: AuthRequest, res, next) => {
+leaguesRouter.post('/:id/teams', requireAuth, requirePermission('league:register_team'), validate(registerTeamSchema), async (req: AuthRequest, res, next) => {
   try {
     const { teamId } = req.body;
-    if (!teamId) return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'teamId required' } });
 
     const league = await prisma.league.findUnique({ where: { id: req.params.id } });
     if (!league) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'League not found' } });

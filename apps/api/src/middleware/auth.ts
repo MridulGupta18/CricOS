@@ -47,18 +47,6 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
   }
 }
 
-// Optional auth — attaches user if token present, but doesn't block unauthenticated requests
-export function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (header?.startsWith('Bearer ')) {
-    try {
-      const payload = jwt.verify(header.slice(7), _JWT_SECRET) as unknown as { id: string; email: string; role: UserRole; tokenVersion?: number };
-      req.user = payload;
-    } catch { /* no-op — unauthenticated is fine */ }
-  }
-  next();
-}
-
 // ─── PERMISSION GUARDS ───────────────────────────────────────
 
 export function requirePermission(action: Action) {

@@ -147,12 +147,13 @@ authRouter.post('/login', validate(loginSchema), async (req, res, next) => {
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
-      const next = user.failedLoginCount + 1;
+      // Renamed away from `next` so we don't shadow the Express next() callback.
+      const attempts = user.failedLoginCount + 1;
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          failedLoginCount: next,
-          lockedUntil: next >= MAX_FAILED_LOGINS ? new Date(Date.now() + LOCKOUT_MS) : null,
+          failedLoginCount: attempts,
+          lockedUntil: attempts >= MAX_FAILED_LOGINS ? new Date(Date.now() + LOCKOUT_MS) : null,
         },
       });
       return invalid();
@@ -322,7 +323,9 @@ authRouter.post('/forgot', validate(requestResetSchema), async (req, res, next) 
       sendEmail({ ...tmpl, to: user.email }).catch(() => {});
       logger.info({ userId: user.id }, 'Password reset initiated');
     } else {
-      logger.info({ email }, 'Password reset requested for unknown email (no-op)');
+      // Don't write the raw email — it's PII and exposes the enumeration
+      // pattern to anyone with log access. Log a redacted prefix instead.
+      logger.debug({ emailPrefix: email.slice(0, 3) }, 'Password reset requested for unknown email (no-op)');
     }
     res.json({ success: true, data: null });
   } catch (err) { next(err); }

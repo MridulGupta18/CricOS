@@ -46,9 +46,9 @@ model User {
   createdTeams     Team[]    @relation("TeamCreator")
   payments         Payment[]
 
+  // verificationToken and passwordResetToken have unique indexes via @unique
+  // already — no need for redundant non-unique indexes on the same columns.
   @@index([email])
-  @@index([verificationToken])
-  @@index([passwordResetToken])
 }
 
 model RefreshToken {

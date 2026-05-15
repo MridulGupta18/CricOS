@@ -277,16 +277,23 @@ playersRouter.post('/', requireAuth, requirePermission('player:create'), validat
 });
 
 // PATCH /api/v1/players/:id — edit own profile (or any, if ADMIN/MASTER).
-// Strip `userId` from the body even if a client sends one — the link cannot be transferred.
+// Strip `userId` from the body for non-privileged callers — the link cannot
+// be transferred by a normal user even though it appears in the Zod schema
+// (the schema is shared with POST, where admins may legitimately set it).
 const updatePlayerSchema = createPlayerSchema.partial();
 playersRouter.patch('/:id', requireAuth, requirePermission('player:update'), validate(updatePlayerSchema), async (req: AuthRequest, res, next) => {
   try {
     const existing = await prisma.player.findUnique({ where: { id: req.params.id }, select: { userId: true } });
     if (!existing) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Player not found' } });
-    if (existing.userId !== req.user!.id && req.user!.role !== 'ADMIN' && req.user!.role !== 'MASTER') {
+    const isPrivileged = req.user!.role === 'ADMIN' || req.user!.role === 'MASTER';
+    if (existing.userId !== req.user!.id && !isPrivileged) {
       return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You can only edit your own player profile' } });
     }
-    const player = await prisma.player.update({ where: { id: req.params.id }, data: req.body });
+    // Non-admin callers can't transfer the userId link. Drop the field even
+    // if the client sent one (whether deliberately or not).
+    const { userId: _drop, ...rest } = req.body;
+    const data = isPrivileged ? req.body : rest;
+    const player = await prisma.player.update({ where: { id: req.params.id }, data });
     res.json({ success: true, data: player });
   } catch (err) { next(err); }
 });
