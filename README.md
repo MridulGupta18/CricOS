@@ -11,7 +11,7 @@ Mobile app for Android and iOS, backed by an Express API and PostgreSQL.
 |---|---|
 | Mobile (Android + iOS) | React Native + **Expo** (Expo Router) |
 | Styling | **NativeWind** v4 (Tailwind in React Native) |
-| State | **Zustand** + **expo-secure-store** for tokens |
+| State | **Zustand** — auth tokens in `expo-secure-store`, other app state in AsyncStorage |
 | Data fetching | **TanStack Query** |
 | Real-time | **Socket.io** client |
 | Animations | **Reanimated 3** + haptic feedback |
@@ -23,7 +23,7 @@ Mobile app for Android and iOS, backed by an Express API and PostgreSQL.
 | Logging | **Pino** (structured JSON in prod, pretty in dev) |
 | Errors | **Sentry** (optional — no-op without DSN) |
 | Tests | **Vitest** (scoring engine, ACL, auth helpers) |
-| CI | GitHub Actions (lint, type-check, test, build) |
+| CI | GitHub Actions (type-check, test, build) |
 
 ---
 
@@ -32,7 +32,7 @@ Mobile app for Android and iOS, backed by an Express API and PostgreSQL.
 ### Prerequisites
 - Node.js ≥ 20
 - PostgreSQL 15+
-- Expo CLI (`npm install -g expo-cli`)
+- No global Expo install needed — we invoke `npx expo …` everywhere.
 
 ### 1. Install + generate Prisma
 
@@ -155,8 +155,8 @@ The scoring engine has full coverage of cricket rule edge cases (free hits, no-b
 
 ## Deployment
 
-- **Railway / Fly / Render** — `nixpacks.toml` runs `prisma migrate deploy` + `tsup` then starts `node dist/index.js`.
-- **Health checks** — set `/health/ready` as the readiness probe.
+- **Railway** — `railway.json.buildCommand` runs `prisma generate` → `prisma migrate deploy` → `tsup build`; `startCommand` runs `node apps/api/dist/index.js`. The `healthcheckPath` is wired to `/health/ready`, which performs an actual `SELECT 1`.
+- **Fly / Render / generic Nixpacks** — the same steps live in `nixpacks.toml` for builders that don't honor `railway.json`.
 - **Required env** — `JWT_SECRET`, `REFRESH_TOKEN_SECRET`, `DATABASE_URL`, `FRONTEND_URL`. The API refuses to start in production without `JWT_SECRET`/`REFRESH_TOKEN_SECRET`.
 - **Optional env** — `STRIPE_*` (payments), `RESEND_API_KEY` (email), `SENTRY_DSN` (observability), `MASTER_EMAIL` (bootstrap).
 
